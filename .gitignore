@@ -1,0 +1,50 @@
+# --- Private data: lives in the separate private data repo, never here ---
+inbox/
+vault/
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*cookies*.txt
+*.cookies
+secrets/
+
+# --- Downloaded media / processing scratch ---
+*.mp4
+*.mov
+*.m4a
+*.mp3
+*.wav
+*.webm
+frames/
+tmp/
+
+# --- Python / uv ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Local models ---
+models/
+*.gguf
+*.bin
+
+# --- OS / editors / local tooling ---
+.DS_Store
+.idea/
+.vscode/
+.serena/
+.claude/settings.local.json
