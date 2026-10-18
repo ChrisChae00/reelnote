@@ -73,3 +73,53 @@ def test_notes_with_category(tmp_path):
     p = make_note(tmp_path)
     assert vault.notes_with_category(tmp_path, {"생산성"}) == [p]
     assert vault.notes_with_category(tmp_path, {"요리"}) == []
+
+import re
+
+def _with_user_lines(p):
+    p.write_text(p.read_text().replace("saved_at:", "related: [[Foo]]  # my link\n# keep me\nsaved_at:"))
+
+def test_update_frontmatter_preserves_user_text(tmp_path):
+    p = make_note(tmp_path)
+    _with_user_lines(p)
+    vault.update_frontmatter(p, hub="[[X]]")
+    text = p.read_text()
+    assert "related: [[Foo]]  # my link\n" in text and "# keep me\n" in text
+    assert vault.read_note(p)[0]["hub"] == "[[X]]"
+
+def test_append_preserves_frontmatter_text(tmp_path):
+    p = make_note(tmp_path)
+    _with_user_lines(p)
+    before = vault._split(p.read_text())[0]
+    vault.append_to_section(p, "My memo", "- m")
+    after = p.read_text()
+    assert vault._split(after)[0] == before
+    assert "related: [[Foo]]  # my link\n# keep me\n" in after
+
+def test_append_ignores_h3_lookalike(tmp_path):
+    p = tmp_path / "n.md"
+    p.write_text("---\nshortcode: C1\n---\n# t\n\n### My memo\n\nold\n\n## My memo\n\n- real\n")
+    vault.append_to_section(p, "My memo", "- new")
+    body = vault.read_note(p)[1]
+    real = body[re.search(r"(?m)^## My memo$", body).start():]
+    assert "- new" in real and "- real" in real
+    assert "- new" not in body[:re.search(r"(?m)^## My memo$", body).start()]
+
+def test_append_finds_heading_at_eof_without_newline(tmp_path):
+    p = tmp_path / "n.md"
+    p.write_text("---\nshortcode: C1\n---\n# t\n\n## My memo")
+    vault.append_to_section(p, "My memo", "- m")
+    body = vault.read_note(p)[1]
+    assert body.count("## My memo") == 1 and body.endswith("## My memo\n\n- m\n")
+
+def test_notes_with_category_skips_broken_yaml(tmp_path):
+    (tmp_path / "bad.md").write_text("---\ncategory: [unclosed\n---\n# b\n")
+    p = make_note(tmp_path)
+    assert vault.notes_with_category(tmp_path, {"생산성"}) == [p]
+
+def test_upsert_hub_with_only_start_marker_keeps_text(tmp_path):
+    p = tmp_path / "Hub.md"
+    p.write_text("---\ncategory: x\n---\n# Hub\n\n<!-- reelnote:start -->\nmy text\n")
+    vault.upsert_hub(tmp_path, "Hub", category="x", description="d", members=[("a", ["f"])])
+    assert p.read_text().startswith("---\ncategory: x\n---\n# Hub\n\n<!-- reelnote:start -->\nmy text\n")
+    assert "## Notes" in p.read_text()

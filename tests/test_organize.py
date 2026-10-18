@@ -39,3 +39,8 @@ def test_clusters_groups_close_vectors():
 
 def test_clusters_too_few():
     assert clusters([("a", [1, 0])]) == []
+
+def test_clusters_ignores_zero_vectors():
+    items = [("a", [1, 0, 0]), ("b", [0.98, 0.05, 0]), ("c", [0, 1, 0]), ("d", [0.02, 0.99, 0]), ("e", [0, 0, 1]), ("z", [0, 0, 0])]
+    groups = sorted(sorted(g) for g in clusters(items))
+    assert groups == [["a", "b"], ["c", "d"]]

@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import stat
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -7,6 +10,11 @@ import yaml
 OWNED_KEYS = {"category", "category_source", "hub", "status", "dm_links", "duplicate_of"}
 START, END = "<!-- reelnote:start -->", "<!-- reelnote:end -->"
 _BAD = re.compile(r'[\\/:*?"<>|#^\[\]]')
+_FM = re.compile(r"\A---\n(.*?)\n?---[ \t]*(?:\n|\Z)", re.S)
+
+
+class BadNote(ValueError):
+    pass
 
 
 def safe_name(text: str) -> str:
@@ -22,21 +30,50 @@ def note_filename(notes_dir: Path, saved_at: str, title: str) -> Path:
     return path
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _split(text: str) -> tuple[str | None, str]:
+    m = _FM.match(text)
+    if not m:
+        return None, text
+    return m.group(1), text[m.end():]
+
+
+def _join(fm_text: str | None, body: str) -> str:
+    if fm_text is None:
+        return body
+    return "---\n" + (fm_text + "\n" if fm_text else "") + "---\n" + body
+
+
 def _dump(fm: dict) -> str:
-    return "---\n" + yaml.safe_dump(fm, allow_unicode=True, sort_keys=False) + "---\n"
+    return "---\n" + yaml.safe_dump(fm, allow_unicode=True, sort_keys=False, width=float("inf")) + "---\n"
 
 
 def read_note(path: Path) -> tuple[dict, str]:
-    text = path.read_text(encoding="utf-8")
-    if text.startswith("---\n"):
-        head, _, body = text[4:].partition("\n---\n")
-        return yaml.safe_load(head) or {}, body
-    return {}, text
-
-
-def _write(path: Path, fm: dict, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_dump(fm) + body, encoding="utf-8")
+    raw, body = _split(path.read_text(encoding="utf-8"))
+    if raw is None:
+        return {}, body
+    try:
+        fm = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        raise BadNote(f"{path}: unparseable frontmatter: {e}") from e
+    if fm is None:
+        return {}, body
+    if not isinstance(fm, dict):
+        raise BadNote(f"{path}: frontmatter is not a mapping")
+    return fm, body
 
 
 def render_note(fm: dict, *, title: str, summary: str, key_facts: list[str], dm: list[tuple[str, str]],
@@ -51,31 +88,53 @@ def render_note(fm: dict, *, title: str, summary: str, key_facts: list[str], dm:
 
 
 def write_new_note(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    _atomic_write(path, text)
+
+
+def _set_key(fm_text: str, key: str, value) -> str:
+    block = yaml.safe_dump({key: value}, allow_unicode=True, sort_keys=False, width=float("inf")).rstrip("\n")
+    lines = fm_text.split("\n") if fm_text else []
+    out, i, done = [], 0, False
+    while i < len(lines):
+        if re.match(rf"{re.escape(key)}:", lines[i]):
+            if not done:
+                out.append(block)
+                done = True
+            i += 1
+            while i < len(lines) and (lines[i].startswith(" ") or lines[i].startswith("- ")):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    if not done:
+        out.append(block)
+    return "\n".join(out)
 
 
 def update_frontmatter(path: Path, **changes) -> None:
     bad = set(changes) - OWNED_KEYS
     if bad:
         raise ValueError(f"not owned by reelnote: {sorted(bad)}")
-    fm, body = read_note(path)
-    fm.update(changes)
-    _write(path, fm, body)
+    read_note(path)  # refuse to touch a note whose frontmatter is broken
+    raw, body = _split(path.read_text(encoding="utf-8"))
+    fm_text = raw or ""
+    for key, value in changes.items():
+        fm_text = _set_key(fm_text, key, value)
+    _atomic_write(path, _join(fm_text, body))
 
 
 def append_to_section(path: Path, heading: str, text: str) -> None:
-    fm, body = read_note(path)
-    marker = f"## {heading}\n"
-    if marker not in body:
-        body = body.rstrip("\n") + f"\n\n{marker}\n{text}\n"
+    raw, body = _split(path.read_text(encoding="utf-8"))
+    m = re.search(rf"(?m)^## {re.escape(heading)}[ \t]*$", body)
+    if not m:
+        body = body.rstrip("\n") + f"\n\n## {heading}\n\n{text}\n"
     else:
-        start = body.index(marker) + len(marker)
-        nxt = body.find("\n## ", start)
-        end = len(body) if nxt == -1 else nxt
-        section = body[start:end].rstrip("\n")
-        body = body[:start] + section + "\n" + text + "\n" + body[end:]
-    _write(path, fm, body)
+        nxt = re.compile(r"(?m)^## ").search(body, m.end())
+        end = nxt.start() if nxt else len(body)
+        keep = body[m.end():end].rstrip("\n") or "\n"
+        rest = body[end:]
+        body = body[:m.end()] + keep + "\n" + text + "\n" + ("\n" + rest if rest else "")
+    _atomic_write(path, _join(raw, body))
 
 
 def _hub_block(description: str, members: list[tuple[str, list[str]]]) -> str:
@@ -94,14 +153,15 @@ def upsert_hub(hubs_dir: Path, name: str, *, category: str | None, description: 
     path = hubs_dir / f"{safe_name(name)}.md"
     block = _hub_block(description, members)
     if not path.exists():
-        _write(path, {"category": category, "pinned": False}, f"# {name}\n\n{block}\n")
+        _atomic_write(path, _dump({"category": category, "pinned": False}) + f"# {name}\n\n{block}\n")
         return path
-    fm, body = read_note(path)
-    if START in body and END in body:
-        body = body[:body.index(START)] + block + body[body.index(END) + len(END):]
+    raw, body = _split(path.read_text(encoding="utf-8"))
+    s, e = body.find(START), body.find(END)
+    if s != -1 and e != -1 and s < e:
+        body = body[:s] + block + body[e + len(END):]
     else:
-        body = body.rstrip("\n") + f"\n\n{block}\n"
-    _write(path, fm, body)
+        body = body + ("\n" if body.endswith("\n") else "\n\n") + block + "\n"
+    _atomic_write(path, _join(raw, body))
     return path
 
 
@@ -112,14 +172,20 @@ def write_review(path: Path, *, duplicates, failed, unavailable, dm_errors) -> N
     lines += ["", "## Failed", ""] + ([f"- {url}: {err}" for url, err in failed] or ["None."])
     lines += ["", "## Unavailable videos", ""] + ([f"- [[{s}]]" for s in unavailable] or ["None."])
     lines += ["", "## DM pages that could not be read", ""] + ([f"- [[{s}]]: {e}" for s, e in dm_errors] or ["None."])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _atomic_write(path, "\n".join(lines) + "\n")
 
 
 def write_counts(path: Path, counts: dict[str, int]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(counts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _atomic_write(path, json.dumps(counts, ensure_ascii=False, indent=2) + "\n")
 
 
 def notes_with_category(notes_dir: Path, names: set[str]) -> list[Path]:
-    return [p for p in sorted(notes_dir.glob("*.md")) if read_note(p)[0].get("category") in names]
+    out = []
+    for p in sorted(notes_dir.glob("*.md")):
+        try:
+            cat = read_note(p)[0].get("category")
+        except BadNote:
+            continue
+        if isinstance(cat, str) and cat in names:
+            out.append(p)
+    return out

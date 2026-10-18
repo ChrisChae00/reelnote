@@ -26,11 +26,12 @@ def match(vec, others, dup_t: float, hub_t: float) -> Match:
 
 
 def clusters(items: list[tuple[str, list[float]]], min_size: int = 2) -> list[list[str]]:
+    items = [(c, v) for c, v in items if any(v)]  # zero vectors have no direction; never cluster them
     if len(items) < min_size + 1:
         return []
     x = np.asarray([v for _, v in items], dtype=np.float32)
     x /= np.linalg.norm(x, axis=1, keepdims=True)  # euclidean on unit vectors ranks like cosine
-    labels = HDBSCAN(min_cluster_size=min_size).fit_predict(x)
+    labels = HDBSCAN(min_cluster_size=min_size, copy=True).fit_predict(x)
     groups: dict[int, list[str]] = {}
     for (code, _), label in zip(items, labels):
         if label >= 0:
