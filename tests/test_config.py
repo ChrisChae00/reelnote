@@ -33,3 +33,10 @@ def test_unknown_provider_rejected(tmp_path):
     p.write_text('providers = ["grok"]\n')
     with pytest.raises(ValueError, match="providers must be a list of: claude, codex"):
         load(p)
+
+
+def test_empty_providers_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('providers = []\n')
+    with pytest.raises(ValueError):
+        load(p)

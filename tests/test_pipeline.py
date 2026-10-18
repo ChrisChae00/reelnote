@@ -427,3 +427,40 @@ def test_merged_dm_text_is_inert(tmp_path):
     pipeline.process_save(item(id="i2", dm="https://n.site/y"), cfg, store, deps, [])
     body = vault.read_note(only_note(cfg))[1]
     assert "&lt;img" in body and "<img" not in body and "![" not in body
+
+
+def test_new_hub_never_takes_over_pinned_hub(tmp_path):
+    cfg, store, deps = make(tmp_path, vec=(1.0, 0.0))
+    (cfg.vault / "hubs").mkdir()
+    pinned = cfg.vault / "hubs" / "맥 앱.md"
+    pinned.write_text("---\ncategory: null\npinned: true\n---\n# 맥 앱\n\nmine\n")
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    deps = replace(deps, embed=lambda t: [0.8, 0.6])
+    pipeline.process_save(item(id="i2", code="B2"), cfg, store, deps, [])
+    assert pinned.read_text() == "---\ncategory: null\npinned: true\n---\n# 맥 앱\n\nmine\n"
+    assert {h for _, _, h in store.embeddings()} == {"맥 앱 2"}
+    assert (cfg.vault / "hubs" / "맥 앱 2.md").exists()
+
+
+def test_new_hub_with_taken_name_gets_suffix(tmp_path):
+    cfg, store, deps = make(tmp_path, vec=(1.0, 0.0))
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    deps = replace(deps, embed=lambda t: [0.8, 0.6])
+    pipeline.process_save(item(id="i2", code="B2"), cfg, store, deps, [])
+    deps = replace(deps, embed=lambda t: [-1.0, 0.0])
+    pipeline.process_save(item(id="i3", code="C3"), cfg, store, deps, [])
+    deps = replace(deps, embed=lambda t: [-0.8, -0.6])
+    pipeline.process_save(item(id="i4", code="D4"), cfg, store, deps, [])
+    hubs = {c: h for c, _, h in store.embeddings()}
+    assert hubs == {"A1": "맥 앱", "B2": "맥 앱", "C3": "맥 앱 2", "D4": "맥 앱 2"}
+
+
+def test_handle_error_tolerates_moved_inbox_file(tmp_path):
+    cfg, store, deps = make(tmp_path)
+    op = item()
+    cfg.inbox.mkdir()
+    store.create("C8xYz2Qp", op.id, {})
+    for _ in range(cfg.max_attempts - 1):
+        store.fail_attempt("C8xYz2Qp", "x", cfg.max_attempts)
+    pipeline._handle_error(op, RuntimeError("boom"), cfg.inbox / "gone.json", cfg, store)
+    assert store.get("C8xYz2Qp").state == "failed"

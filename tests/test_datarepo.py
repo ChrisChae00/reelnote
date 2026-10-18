@@ -143,3 +143,14 @@ def test_stale_rebase_is_recovered(remote_and_clones):
     assert (mac / "vault" / "categories.md").read_text() == "# c\nphone\n"
     assert (mac / "vault" / "keep.md").read_text() == "keep"
     assert _out(mac, "status", "--porcelain") == ""
+
+
+def test_commit_skips_atomic_write_temp_files(remote_and_clones):
+    mac, _ = remote_and_clones
+    (mac / "vault" / "notes").mkdir()
+    (mac / "vault" / "notes" / ".a.md.x1y2.tmp").write_text("half")
+    (mac / "vault" / ".review.md.abc.tmp").write_text("half")
+    (mac / "vault" / "notes" / "a.md").write_text("done")
+    assert DataRepo(mac).commit("c")
+    files = subprocess.run(["git", "-C", str(mac), "ls-files"], capture_output=True, text=True).stdout.split()
+    assert "vault/notes/a.md" in files and not [f for f in files if f.endswith(".tmp")]

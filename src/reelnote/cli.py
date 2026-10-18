@@ -10,6 +10,7 @@ from pathlib import Path
 from reelnote import pipeline
 from reelnote.config import load
 from reelnote.datarepo import DataRepo, SyncError
+from reelnote.llm import AllProvidersLimited
 from reelnote.store import Store
 
 
@@ -75,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
         except SyncError as e:
             print(f"reelnote: sync failed: {e}", file=sys.stderr)
             notify(f"sync failed: {e}")
+            return 1
+        except AllProvidersLimited as e:  # only regroup lets this escape; run_once handles it per item
+            print(f"reelnote: no AI provider available: {e}", file=sys.stderr)
             return 1
     return 0
 

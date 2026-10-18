@@ -53,3 +53,19 @@ def test_notify_passes_message_as_argument(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
     seen.clear(); cli.notify("x")
     assert seen == []
+
+
+def test_cli_regroup_limited_exit_1(tmp_path, monkeypatch, capsys):
+    from reelnote import pipeline
+    from reelnote.datarepo import DataRepo
+    from reelnote.llm import AllProvidersLimited
+    cfgfile = tmp_path / "c.toml"
+    cfgfile.write_text(f'data_repo = "{tmp_path / "data"}"\nstate_dir = "{tmp_path / "state"}"\n')
+    monkeypatch.setenv("REELNOTE_CONFIG", str(cfgfile))
+    monkeypatch.setattr(DataRepo, "pull", lambda self: None)
+    def limited(*a, **k):
+        raise AllProvidersLimited("claude: limited; codex: limited")
+    monkeypatch.setattr(pipeline, "regroup", limited)
+    assert main(["regroup"]) == 1
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1 and "claude: limited" in err

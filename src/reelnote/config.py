@@ -42,7 +42,7 @@ def load(path: Path | None = None) -> Config:
     state_dir = Path(raw.pop("state_dir", "~/.local/state/reelnote")).expanduser()
     if "providers" in raw:
         names = raw["providers"]
-        if not isinstance(names, list) or not all(n in ("claude", "codex") for n in names):
+        if not isinstance(names, list) or not names or not all(n in ("claude", "codex") for n in names):
             raise ValueError("providers must be a list of: claude, codex")
         raw["providers"] = tuple(names)
     if "whisper_model" in raw:

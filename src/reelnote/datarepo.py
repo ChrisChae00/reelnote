@@ -62,7 +62,7 @@ class DataRepo:
         return sorted((self.path / "inbox").glob("*.json"))
 
     def commit(self, message: str) -> bool:
-        self._git("add", "-A")
+        self._git("add", "-A", "--", ".", ":(exclude,glob)**/.*.tmp")  # never a half-written atomic write
         if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
             return False
         self._git("commit", "-q", "-m", message)

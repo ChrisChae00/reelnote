@@ -196,6 +196,21 @@ def _refresh_hub(cfg, store, name, description=None, category=None):
         vault.update_frontmatter(_notes_dir(cfg) / f"{stem}.md", hub=f"[[{vault.safe_name(name)}]]")
 
 
+def _free_hub_name(cfg: Config, store: Store, name: str) -> str:
+    """A new hub never takes over a pinned hub or one that already has members: add 2, 3, ..."""
+    taken = {vault.safe_name(h) for _, _, h in store.embeddings() if h}
+    base, n = name, 2
+    while True:
+        path = cfg.vault / "hubs" / f"{vault.safe_name(name)}.md"
+        try:
+            pinned = path.exists() and vault.read_note(path)[0].get("pinned") is True
+        except vault.BadNote:
+            pinned = True  # cannot tell: leave the user's file alone
+        if not pinned and vault.safe_name(name) not in taken:
+            return name
+        name, n = f"{base} {n}", n + 1
+
+
 def _hub_work(rec, m, cfg, store, deps, category):
     note = rec.data["note"]
     if m.kind in ("hub", "duplicate") and m.hub:
@@ -204,9 +219,10 @@ def _hub_work(rec, m, cfg, store, deps, category):
     elif m.kind == "new_hub":
         other = store.get(m.other)
         named = deps.llm.run(hub_prompt(titles=[note["title"], other.data["note"]["title"]]), HUB_SCHEMA)
+        name = _free_hub_name(cfg, store, named["name"])
         for code in (rec.code, m.other):
-            store.set_hub(code, named["name"])
-        _refresh_hub(cfg, store, named["name"], description=named["description"], category=category)
+            store.set_hub(code, name)
+        _refresh_hub(cfg, store, name, description=named["description"], category=category)
 
 
 def _step_write(rec, cfg, store, deps, categories):
@@ -319,9 +335,10 @@ def regroup(cfg: Config, store: Store, deps: Deps) -> int:
     for group in organize.clusters(unassigned):
         titles = [store.get(c).data["note"]["title"] for c in group]
         named = deps.llm.run(hub_prompt(titles=titles), HUB_SCHEMA)
+        name = _free_hub_name(cfg, store, named["name"])
         for c in group:
-            store.set_hub(c, named["name"])
-        _refresh_hub(cfg, store, named["name"], description=named["description"])
+            store.set_hub(c, name)
+        _refresh_hub(cfg, store, name, description=named["description"])
         made += 1
     return made
 
@@ -362,7 +379,7 @@ def _handle_error(op, e: Exception, path: Path, cfg: Config, store: Store) -> No
     if rec is None or rec.state == "written":
         _record_error(store, op.id, err)  # written notes never accumulate failed attempts
         return
-    if store.fail_attempt(rec.code, err, cfg.max_attempts).state == "failed":
+    if store.fail_attempt(rec.code, err, cfg.max_attempts).state == "failed" and path.exists():
         (cfg.inbox / "failed").mkdir(exist_ok=True)
         path.rename(cfg.inbox / "failed" / path.name)
 
