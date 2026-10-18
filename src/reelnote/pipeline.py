@@ -1,6 +1,6 @@
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -333,6 +333,19 @@ def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str,
             path.rename(failed_dir / path.name)
             (failed_dir / f"{path.stem}.error.txt").write_text(str(e))
             tally["invalid"] = tally.get("invalid", 0) + 1
+    renames: dict[str, str] = {}  # old -> final new name, chained across ops
+    for path, op in [(p, o) for p, o in parsed if isinstance(o, RenameOp)]:
+        try:  # renames first: the phone already removed the old name from categories.md
+            apply_rename(op, cfg, store)
+            for k, v in renames.items():
+                if v == op.old:
+                    renames[k] = op.new
+            renames[op.old] = op.new
+            path.unlink()
+            repo.commit(f"rename category {op.old} -> {op.new}")
+        except Exception as e:
+            tally["error"] = tally.get("error", 0) + 1
+            _handle_error(op, e, path, cfg, store)
     current = _read_categories(cfg)
     if current is not None:  # no categories.md: do not treat every category as deleted
         try:
@@ -341,14 +354,9 @@ def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str,
             pass  # retried next run because last_categories was not updated
         except Exception as e:
             _record_error(store, "reclassify", str(e) or type(e).__name__)
-    for path, op in parsed:
+    for path, op in [(p, o) for p, o in parsed if isinstance(o, SaveItem)]:
+        op = replace(op, category=renames.get(op.category, op.category))
         try:
-            if isinstance(op, RenameOp):
-                apply_rename(op, cfg, store)
-                path.unlink()
-                repo.commit(f"rename category {op.old} -> {op.new}")
-                current = _read_categories(cfg) or []
-                continue
             state = process_save(op, cfg, store, deps, current or [])
             tally[state] = tally.get(state, 0) + 1
             if state in ("written", "merged"):

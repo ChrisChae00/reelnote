@@ -269,13 +269,13 @@ def test_rename_then_save_order(tmp_path):
     assert fm["category"] == "Y" and fm["category_source"] == "manual"
 
 
-def test_save_after_rename_with_old_category_is_auto(tmp_path):
+def test_save_after_rename_with_old_category_follows_rename(tmp_path):
     cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
     (cfg.inbox / "001.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
     put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/A1/", category="X")
     pipeline.run_once(cfg, store, deps, repo)
     fm, _ = vault.read_note(only_note(cfg))
-    assert fm["category_source"] == "auto" and fm["category"] is None
+    assert fm["category_source"] == "manual" and fm["category"] == "Y"
 
 
 def test_missing_categories_file_skips_reclassify(tmp_path):
@@ -287,3 +287,30 @@ def test_missing_categories_file_skips_reclassify(tmp_path):
     fm, _ = vault.read_note(only_note(cfg))
     assert fm["category"] == "a" and fm["category_source"] == "manual"
     assert store.get_meta("last_categories") == ["a"]
+
+
+def test_phone_rename_keeps_manual_note(tmp_path):
+    # phone flow: categories.md already shows Y (X gone) and inbox holds the X -> Y rename op
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "X" and fm["category_source"] == "manual"
+    (cfg.vault / "categories.md").write_text("# c\nY\n")
+    (cfg.inbox / "002.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
+    _git(cfg.data_repo, "add", "-A"); _git(cfg.data_repo, "commit", "-qm", "phone")
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "Y" and fm["category_source"] == "manual"
+    assert store.get("A1").data["category"] == "Y"
+
+
+def test_chained_renames_map_saves(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nZ\n")
+    store.set_meta("last_categories", ["X"])
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    (cfg.inbox / "002.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
+    (cfg.inbox / "003.json").write_text(json.dumps({"op": "rename_category", "from": "Y", "to": "Z"}))
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "Z" and fm["category_source"] == "manual"
