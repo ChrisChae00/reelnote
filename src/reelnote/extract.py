@@ -71,9 +71,14 @@ def frame_texts(video: Path, workdir: Path, run=subprocess.run, ocr=None) -> lis
 
 def _check_ip(ip_str: str, url: str):
     ip = ipaddress.ip_address(ip_str.split("%")[0])
-    ip = getattr(ip, "ipv4_mapped", None) or ip
-    if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
-            or ip.is_multicast or ip.is_unspecified):
+    if ip.version == 6:
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip.sixtofour:
+            ip = ip.sixtofour
+        elif ip in ipaddress.ip_network("64:ff9b::/96"):
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if not ip.is_global or ip.is_multicast:
         raise PageUnavailable(f"{url}: refusing non-public address {ip}")
     return ip
 
@@ -127,11 +132,31 @@ class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _NoFTP(urllib.request.FTPHandler):
+    def ftp_open(self, req):
+        raise PageUnavailable("scheme not allowed")
+
+
+class _NoFile(urllib.request.FileHandler):
+    def file_open(self, req):
+        raise PageUnavailable("scheme not allowed")
+
+
+class _NoData(urllib.request.DataHandler):
+    def data_open(self, req):
+        raise PageUnavailable("scheme not allowed")
+
+
+def _opener():
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _SafeHTTPHandler, _SafeHTTPSHandler, _CheckedRedirect,
+        _NoFTP, _NoFile, _NoData)
+
+
 def _fetch_bytes(url: str) -> tuple[bytes, str]:
     _check_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) reelnote"})
-    with urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _SafeHTTPHandler, _SafeHTTPSHandler, _CheckedRedirect).open(req, timeout=20) as r:
+    with _opener().open(req, timeout=20) as r:
         data = r.read(10_000_001)
         if len(data) > 10_000_000:
             raise PageUnavailable(f"{url}: too large")

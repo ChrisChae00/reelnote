@@ -137,3 +137,15 @@ def test_env_proxy_ignored(monkeypatch):
     with pytest.raises(PageUnavailable):
         page_text("http://example.com/")
     assert used == [("93.184.216.34", 80)]
+
+
+@pytest.mark.parametrize("ip", ["100.64.0.1", "64:ff9b::7f00:1", "2002:c0a8:0101::1", "198.18.0.1"])
+def test_non_global_addresses_rejected(monkeypatch, ip):
+    _resolve_to(monkeypatch, ip)
+    with pytest.raises(PageUnavailable):
+        ex._check_url("http://host.example/")
+
+
+def test_opener_has_no_file_handler():
+    with pytest.raises(PageUnavailable):
+        ex._opener().open("file:///etc/passwd")
