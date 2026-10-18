@@ -23,4 +23,10 @@ Consequences for Task 6:
 ## yt-dlp
 
 - `yt-dlp` lists Instagram's `instagram:user` extractor as broken (`Unable to extract data`). Profile listing does not work, which reelnote doesn't need anyway.
-- Single-Reel download: pending a real public Reel URL from the owner.
+- Single-Reel download (2026-10-18, a public Reel from the owner): works without cookies. `id` is the shortcode; `description` holds the caption; `uploader` holds the display name (`channel` holds the handle). `duration` is null.
+
+## End-to-end smoke test (2026-10-18)
+
+- `reelnote run` against a local clone of `reelnote-data`, pushing to a local bare copy, so the real remote was untouched. 1 item went to `written` in about 60 s.
+- Note quality: a Korean title and summary, and 11 key facts with program names and URLs. Category `auto` was picked correctly from `categories.md`.
+- Whisper misheard "leetcode" as "lead code" and "SWE" as "suite", but the OCR text had the right words, so the note was correct. Combining the transcript with screen text works as intended.
