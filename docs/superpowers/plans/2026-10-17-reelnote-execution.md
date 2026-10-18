@@ -21,6 +21,8 @@ Tasks share a batch when they are the same kind of work and a reviewer can judge
 | F | 10–11 (pipeline, CLI, launchd, setup docs) | One subagent, standard model | The integration layer that wires every earlier module together. The CLI is a thin wrapper over the pipeline, and launchd and the docs only invoke the CLI. Splitting them would make the second reviewer re-learn the whole pipeline. |
 | Final | whole branch | Most capable model | Cross-module review: interfaces between batches and the deferred minor findings. |
 
+Batch C runs before Batch B because B's `yt-dlp` check waits on a real Reel URL from the owner, and C does not depend on B.
+
 Batches run one after another, never in parallel. They all commit to `main`, and the later ones import the earlier modules.
 
 ## Decisions made during execution
@@ -36,3 +38,4 @@ The rulings below were made where the plan or spec left a gap. Each entry gives 
 
 | Batch | Commits | Review |
 |---|---|---|
+| A (Tasks 1–4) | `ff97aad..4b5403f` | Spec ✅. 4 Important findings, all in plan-given code: 3 fixed in 1 round (unknown-code `KeyError`, atomic `fail_attempt`, `providers` validation), 1 parked (`note_path` cannot be cleared; no caller needs it). 38 tests. |
