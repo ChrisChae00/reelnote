@@ -32,7 +32,7 @@ The rulings below were made where the plan or spec left a gap. Each entry gives 
 - **Frontmatter `url` uses `/p/<code>/`** instead of the spec example's `/reel/<code>/`. `/p/` opens both reels and photo posts. Cost if wrong: a cosmetic URL difference.
 - **OCR text is deduplicated across frames**, instead of dropping near-duplicate frames as the spec describes. It serves the same goal more simply. Cost if wrong: about one OCR call per second of video, so runs are slower.
 - **A provider that hits its usage limit waits a fixed `cooldown_minutes`.** The spec asks for the provider's reset time, but the CLIs don't print one in a parseable form. Cost if wrong: a provider can sit idle up to an hour after its limit resets.
-- **Grok uses `--sandbox workspace`**, not `strict`. `strict` and `read-only` refuse to start on macOS when `/var/run/docker.sock` is a symlink. Shell, edit, and web tools are still removed. Cost if wrong: Grok can read files outside its empty working directory.
+- **Grok removed (owner decision).** Its `strict` and `read-only` sandboxes refuse to start on macOS when `/var/run/docker.sock` is a symlink. The looser `workspace` sandbox would let injected Reel text make it read local files.
 - **Pinned hubs are protected from `regroup`** (their name and membership). New notes can still join them through the per-note match. Cost if wrong: pinned hubs gain new members.
 
 ## Batch results
@@ -41,3 +41,5 @@ The rulings below were made where the plan or spec left a gap. Each entry gives 
 |---|---|---|
 | A (Tasks 1–4) | `ff97aad..4b5403f` | Spec ✅. 4 Important findings, all in plan-given code: 3 fixed in 1 round (unknown-code `KeyError`, atomic `fail_attempt`, `providers` validation), 1 parked (`note_path` cannot be cleared; no caller needs it). 38 tests. |
 | C (Task 6) | `978519e..9182cb8` | Spec ✅. Review: the login check misread notes that mention "login" (fixed). Background security review: prompt injection could reach CLI tools, since Reel text and DM pages are untrusted. Fixed: Codex `--sandbox read-only`; Grok `--sandbox workspace`, shell/edit/web tools removed, `--max-turns 1`; Claude already had `--tools ""`; the prompt marks sources as untrusted. Grok's `strict` profile cannot start on this Mac (Docker socket symlink), so it uses `workspace`. CLI timeouts now move to the next provider. 2 fix rounds, 54 tests. |
+| C follow-up | `1d9d138` | Owner decision after the background security review flagged the weaker Grok sandbox: **Grok removed entirely**. Providers are now `claude` → `codex`. README and spec updated. Re-review clean. |
+| D (Tasks 7–8) | `598d4a8..66ad8c6` | Spec ✅. 5 Important, fixed in 1 round: frontmatter is now kept as text, so the user's `[[links]]` and comments survive; line-anchored section headings; broken hand-edited YAML no longer stops the run; atomic writes; hub markers checked; HDBSCAN warning and zero-vector crash fixed. 76 tests. |
