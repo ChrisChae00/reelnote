@@ -1,5 +1,6 @@
 import argparse
 import fcntl
+import os
 import shutil
 import subprocess
 import sys
@@ -31,7 +32,7 @@ def run_lock(state_dir: Path):
 
 def notify(message: str) -> None:
     """Best-effort macOS banner: launchd runs are otherwise silent."""
-    if not shutil.which("osascript"):
+    if os.environ.get("REELNOTE_NO_NOTIFY") == "1" or not shutil.which("osascript"):
         return
     try:  # message goes in as argv, never spliced into the script
         subprocess.run(["osascript", "-e", "on run argv", "-e",

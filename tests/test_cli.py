@@ -15,7 +15,7 @@ def test_status_prints_counts(tmp_path, monkeypatch, capsys):
     assert "queued: 1" in capsys.readouterr().out
 
 
-def test_cli_sync_error_exit_1(tmp_path, monkeypatch, capsys):
+def test_cli_sync_error_exit_1(tmp_path, monkeypatch, capsys, notified):
     from reelnote import pipeline
     from reelnote.datarepo import SyncError
     cfgfile = tmp_path / "c.toml"
@@ -26,6 +26,7 @@ def test_cli_sync_error_exit_1(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(pipeline, "run_once", boom)
     assert main(["run"]) == 1
     assert "sync failed" in capsys.readouterr().err
+    assert notified == ["sync failed: push failed: nope"]  # recorder, not osascript
 
 
 def test_cli_sync_error_notifies(tmp_path, monkeypatch):
@@ -43,15 +44,20 @@ def test_cli_sync_error_notifies(tmp_path, monkeypatch):
     assert sent and "pull conflict" in sent[0]
 
 
-def test_notify_passes_message_as_argument(monkeypatch):
+def test_notify_passes_message_as_argument(monkeypatch, real_notify):
     from reelnote import cli
     seen = []
+    monkeypatch.delenv("REELNOTE_NO_NOTIFY")
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/osascript")
     monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: seen.append(cmd))
-    cli.notify('a "quoted" msg')
+    real_notify('a "quoted" msg')
     assert seen and seen[0][0] == "osascript" and seen[0][-1] == 'a "quoted" msg'
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
-    seen.clear(); cli.notify("x")
+    seen.clear(); real_notify("x")
+    assert seen == []
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/osascript")
+    monkeypatch.setenv("REELNOTE_NO_NOTIFY", "1")
+    real_notify("x")
     assert seen == []
 
 
