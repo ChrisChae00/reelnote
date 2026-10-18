@@ -314,3 +314,55 @@ def test_chained_renames_map_saves(tmp_path):
     pipeline.run_once(cfg, store, deps, repo)
     fm, _ = vault.read_note(only_note(cfg))
     assert fm["category"] == "Z" and fm["category_source"] == "manual"
+
+
+def test_merge_ignores_other_note_at_stale_path(tmp_path):
+    cfg, store, deps = make(tmp_path, vec=(1.0, 0.0))
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    a = cfg.vault / store.get("A1").note_path
+    a.unlink()  # user deletes A in Obsidian
+    deps = replace(deps, embed=lambda t: [0.0, 1.0])
+    pipeline.process_save(item(id="i2", code="C3"), cfg, store, deps, [])
+    c = cfg.vault / store.get("C3").note_path
+    assert c == a  # C reused A's old filename
+    before = c.read_text()
+    pipeline.process_save(item(id="i3", code="A1", memo="memo for A1", dm="https://n.site/a1"), cfg, store, deps, [])
+    assert c.read_text() == before
+    fresh = cfg.vault / store.get("A1").note_path
+    assert fresh != c and vault.read_note(fresh)[0]["shortcode"] == "A1"
+    assert "memo for A1" in fresh.read_text()
+
+
+def test_merge_finds_hand_renamed_note(tmp_path):
+    cfg, store, deps = make(tmp_path)
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    a = cfg.vault / store.get("A1").note_path
+    moved = a.with_name("2026-10-17 my own title.md")
+    a.rename(moved)
+    assert pipeline.process_save(item(id="i2", code="A1", memo="later"), cfg, store, deps, []) == "merged"
+    assert "- later" in moved.read_text()
+    assert store.get("A1").note_path == "notes/2026-10-17 my own title.md"
+
+
+def test_merge_without_note_data_records_error_once(tmp_path):
+    def gone(url, workdir, cookies_browser=None):
+        raise Unavailable("removed")
+    cfg, store, deps = make(tmp_path, fetch=gone)
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    (cfg.vault / store.get("A1").note_path).unlink()
+    assert pipeline.process_save(item(id="i2", code="A1", memo="m"), cfg, store, deps, []) == "merged"
+    assert [e[0] for e in store.get_meta("run_errors", [])] == ["i2"]
+
+
+def test_hub_refresh_skips_missing_member(tmp_path):
+    cfg, store, deps = make(tmp_path, vec=(1.0, 0.0))
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    deps = replace(deps, embed=lambda t: [0.8, 0.6])
+    pipeline.process_save(item(id="i2", code="B2"), cfg, store, deps, [])
+    (cfg.vault / store.get("A1").note_path).unlink()
+    other = {"title": "다른 제목", "summary": "s", "key_facts": [], "keywords": [], "category": None}
+    deps = replace(deps, embed=lambda t: [0.9, 0.43], llm=FakeLLM(note=other))
+    pipeline.process_save(item(id="i3", code="C3"), cfg, store, deps, [])
+    c = store.get("C3")
+    assert "hub_error" not in c.data
+    assert vault.read_note(cfg.vault / c.note_path)[0]["hub"] == "[[맥 앱]]"

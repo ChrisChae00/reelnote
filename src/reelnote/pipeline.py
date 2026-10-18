@@ -37,14 +37,34 @@ def _notes_dir(cfg: Config) -> Path:
     return cfg.vault / "notes"
 
 
-def _stem(store: Store, code: str) -> str | None:
+def _note_path(cfg: Config, store: Store, code: str) -> Path | None:
+    """The note that really belongs to code; the user may have renamed or deleted it in Obsidian."""
     rec = store.get(code)
-    return Path(rec.note_path).stem if rec and rec.note_path else None
+    if rec is None:
+        return None
+
+    def owns(p: Path) -> bool:
+        try:
+            return p.is_file() and vault.read_note(p)[0].get("shortcode") == code
+        except (vault.BadNote, UnicodeDecodeError):
+            return False
+
+    if rec.note_path and owns(cfg.vault / rec.note_path):
+        return cfg.vault / rec.note_path
+    for p in sorted(_notes_dir(cfg).glob("*.md")):
+        if owns(p):
+            store.update(code, note_path=str(p.relative_to(cfg.vault)))
+            return p
+    return None
 
 
-def _merge_into_written(item: SaveItem, cfg: Config, store: Store, deps: Deps) -> str:
+def _stem(cfg: Config, store: Store, code: str) -> str | None:
+    path = _note_path(cfg, store, code)
+    return path.stem if path else None
+
+
+def _merge_into_written(item: SaveItem, path: Path, cfg: Config, store: Store, deps: Deps) -> str:
     rec = store.get(shortcode(item.video_url))
-    path = cfg.vault / rec.note_path
     if item.memo and item.memo not in rec.data["memos"]:
         vault.append_to_section(path, "My memo", f"- {item.memo}")
         rec = store.update(rec.code, data={"memos": rec.data["memos"] + [item.memo]})
@@ -142,12 +162,11 @@ def _step_summarize(rec, cfg, store, deps, categories):
     return store.update(rec.code, state="summarized", data={"note": note})
 
 
-def _hub_members(store: Store, hub: str) -> list[tuple[str, list[str]]]:
+def _hub_members(cfg: Config, store: Store, hub: str) -> list[tuple[str, list[str]]]:
     out = []
     for code, _, h in store.embeddings():
-        rec = store.get(code)
-        if h == hub and rec.note_path:
-            out.append((Path(rec.note_path).stem, rec.data.get("note", {}).get("key_facts", [])))
+        if h == hub and (path := _note_path(cfg, store, code)):  # a note deleted by hand drops out
+            out.append((path.stem, store.get(code).data.get("note", {}).get("key_facts", [])))
     return out
 
 
@@ -156,9 +175,10 @@ def _refresh_hub(cfg, store, name, description=None, category=None):
     if description is None and existing.exists():
         body = vault.read_note(existing)[1]
         description = body.split("## Description\n\n", 1)[1].split("\n\n", 1)[0] if "## Description" in body else ""
+    members = _hub_members(cfg, store, name)
     vault.upsert_hub(cfg.vault / "hubs", name, category=category, description=description or "",
-                     members=_hub_members(store, name))
-    for stem, _ in _hub_members(store, name):
+                     members=members)
+    for stem, _ in members:
         vault.update_frontmatter(_notes_dir(cfg) / f"{stem}.md", hub=f"[[{vault.safe_name(name)}]]")
 
 
@@ -184,7 +204,7 @@ def _step_write(rec, cfg, store, deps, categories):
     vec = deps.embed(f"{note['title']}\n{note['summary']}\n{' '.join(note['keywords'])}")
     m = organize.match(vec, [e for e in store.embeddings() if e[0] != rec.code], cfg.dup_threshold, cfg.hub_threshold)
     status = "review" if d.get("dm_errors") else "done"
-    dup = _stem(store, m.other) if m.kind == "duplicate" else None
+    dup = _stem(cfg, store, m.other) if m.kind == "duplicate" else None
     fm = _fm(rec, category=category, category_source=source, status=status, duplicate_of=dup)
     path = vault.note_filename(_notes_dir(cfg), fm["saved_at"], note["title"])
     vault.write_new_note(path, vault.render_note(
@@ -205,7 +225,13 @@ def process_save(item: SaveItem, cfg: Config, store: Store, deps: Deps, categori
     code = shortcode(item.video_url)
     existing = store.get(code)
     if existing and existing.state == "written":
-        return _merge_into_written(item, cfg, store, deps)
+        path = _note_path(cfg, store, code)
+        if path:
+            return _merge_into_written(item, path, cfg, store, deps)
+        if "note" not in existing.data:
+            _record_error(store, item.id, f"note for {code} is gone and cannot be rebuilt; save dropped")
+            return "merged"  # removes the inbox file so it stops looping
+        existing = store.update(code, state="summarized")  # note deleted by hand: write it again
     if existing and existing.state == "failed":
         store.reset(code)  # file reappeared in inbox/: the user asked for a retry
     rec = _ensure_record(item, store)
