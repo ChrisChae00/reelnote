@@ -42,7 +42,7 @@ import urllib.request
 from reelnote import extract as ex
 
 
-def _resolve(monkeypatch, ip):
+def _resolve_to(monkeypatch, ip):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", (ip, 0))])
 
 
@@ -53,13 +53,13 @@ def test_check_url_rejects(url):
 
 
 def test_check_url_rejects_private_resolution(monkeypatch):
-    _resolve(monkeypatch, "10.0.0.5")
+    _resolve_to(monkeypatch, "10.0.0.5")
     with pytest.raises(PageUnavailable):
         ex._check_url("http://evil.example/")
 
 
 def test_check_url_accepts_public(monkeypatch):
-    _resolve(monkeypatch, "93.184.216.34")
+    _resolve_to(monkeypatch, "93.184.216.34")
     ex._check_url("https://example.com/")
 
 
@@ -101,3 +101,39 @@ def test_frame_texts_ignores_stale_frames(tmp_path):
         return subprocess.CompletedProcess(cmd, 0, "", "")
     ex.frame_texts(tmp_path / "v.mp4", tmp_path, run=run, ocr=lambda p: seen.append(p.name) or ["Hello"])
     assert seen == ["0001.png"]
+
+
+def test_connect_time_rebinding_blocked(monkeypatch):
+    answers = iter(["93.184.216.34", "127.0.0.1"])
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", (next(answers), 0))])
+    used = []
+    monkeypatch.setattr(socket, "create_connection", lambda addr, *a, **k: used.append(addr))
+    with pytest.raises(PageUnavailable):
+        page_text("http://rebind.example/")
+    assert not any(a[0] == "127.0.0.1" for a in used)
+
+
+def test_connect_uses_validated_ip(monkeypatch):
+    _resolve_to(monkeypatch, "93.184.216.34")
+    used = []
+    def fake(addr, *a, **k):
+        used.append(addr)
+        raise OSError("stop")
+    monkeypatch.setattr(socket, "create_connection", fake)
+    with pytest.raises(PageUnavailable):
+        page_text("http://example.com/")
+    assert used == [("93.184.216.34", 80)]
+
+
+def test_env_proxy_ignored(monkeypatch):
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    _resolve_to(monkeypatch, "93.184.216.34")
+    used = []
+    def fake(addr, *a, **k):
+        used.append(addr)
+        raise OSError("stop")
+    monkeypatch.setattr(socket, "create_connection", fake)
+    with pytest.raises(PageUnavailable):
+        page_text("http://example.com/")
+    assert used == [("93.184.216.34", 80)]

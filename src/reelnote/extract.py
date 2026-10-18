@@ -1,3 +1,4 @@
+import http.client
 import io
 import ipaddress
 import re
@@ -68,20 +69,56 @@ def frame_texts(video: Path, workdir: Path, run=subprocess.run, ocr=None) -> lis
     return dedupe_lines([ocr(p) for p in sorted(frames.glob("*.png"))])
 
 
+def _check_ip(ip_str: str, url: str):
+    ip = ipaddress.ip_address(ip_str.split("%")[0])
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified):
+        raise PageUnavailable(f"{url}: refusing non-public address {ip}")
+    return ip
+
+
+def _resolve(host: str, port, url: str) -> list[str]:
+    try:
+        return [i[4][0] for i in socket.getaddrinfo(host, port)]
+    except OSError as e:
+        raise PageUnavailable(f"{url}: cannot resolve host: {e}") from e
+
+
 def _check_url(url: str) -> None:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise PageUnavailable(f"{url}: only http/https URLs are allowed")
-    try:
-        infos = socket.getaddrinfo(parts.hostname, parts.port or None)
-    except OSError as e:
-        raise PageUnavailable(f"{url}: cannot resolve host: {e}") from e
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0].split("%")[0])
-        ip = getattr(ip, "ipv4_mapped", None) or ip
-        if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
-                or ip.is_multicast or ip.is_unspecified):
-            raise PageUnavailable(f"{url}: refusing non-public address {ip}")
+    for addr in _resolve(parts.hostname, parts.port or None, url):
+        _check_ip(addr, url)
+
+
+def _safe_socket(host: str, port: int, timeout):
+    # connect to the exact IP we validated, so DNS cannot change between check and connect
+    addr = _resolve(host, port, host)[0]
+    _check_ip(addr, host)
+    return socket.create_connection((addr, port), timeout)
+
+
+class _SafeHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = _safe_socket(self.host, self.port, self.timeout)
+
+
+class _SafeHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        sock = _safe_socket(self.host, self.port, self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_SafeHTTPConnection, req)
+
+
+class _SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SafeHTTPSConnection, req, context=self._context)
 
 
 class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
@@ -91,10 +128,10 @@ class _CheckedRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _fetch_bytes(url: str) -> tuple[bytes, str]:
-    # shortcut: DNS is resolved again at connect time (rebinding window), upgrade by pinning the checked IP
     _check_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh) reelnote"})
-    with urllib.request.build_opener(_CheckedRedirect).open(req, timeout=20) as r:
+    with urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _SafeHTTPHandler, _SafeHTTPSHandler, _CheckedRedirect).open(req, timeout=20) as r:
         data = r.read(10_000_001)
         if len(data) > 10_000_000:
             raise PageUnavailable(f"{url}: too large")
