@@ -41,6 +41,12 @@ class Store:
                             (code,)).fetchone()
         return self._row(r) if r else None
 
+    def _existing(self, code: str) -> Item:
+        item = self.get(code)
+        if item is None:
+            raise KeyError(code)
+        return item
+
     def create(self, code: str, inbox_id: str, data: dict) -> Item:
         self.db.execute("INSERT INTO items(code,inbox_id,data) VALUES(?,?,?)",
                         (code, inbox_id, json.dumps(data, ensure_ascii=False)))
@@ -49,7 +55,7 @@ class Store:
 
     def update(self, code: str, *, state: str | None = None, data: dict | None = None,
                note_path: str | None = None) -> Item:
-        item = self.get(code)
+        item = self._existing(code)
         merged = {**item.data, **(data or {})}
         self.db.execute("UPDATE items SET state=?, data=?, note_path=? WHERE code=?",
                         (state or item.state, json.dumps(merged, ensure_ascii=False),
@@ -58,15 +64,15 @@ class Store:
         return self.get(code)
 
     def fail_attempt(self, code: str, error: str, max_attempts: int) -> Item:
-        item = self.get(code)
-        attempts = item.attempts + 1
-        state = "failed" if attempts >= max_attempts else item.state
-        self.db.execute("UPDATE items SET attempts=?, last_error=?, state=? WHERE code=?",
-                        (attempts, error, state, code))
+        self._existing(code)
+        self.db.execute("UPDATE items SET attempts = attempts + 1, last_error = ?, "
+                        "state = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE state END WHERE code = ?",
+                        (error, max_attempts, code))
         self.db.commit()
         return self.get(code)
 
     def reset(self, code: str) -> Item:
+        self._existing(code)
         self.db.execute("UPDATE items SET attempts=0, last_error=NULL, state='queued' WHERE code=?", (code,))
         self.db.commit()
         return self.get(code)
@@ -92,8 +98,10 @@ class Store:
         return [(c, np.frombuffer(v, dtype=np.float32).tolist(), h) for c, v, h in rows]
 
     def set_hub(self, code: str, hub: str | None) -> None:
-        self.db.execute("UPDATE embeddings SET hub=? WHERE code=?", (hub, code))
+        cur = self.db.execute("UPDATE embeddings SET hub=? WHERE code=?", (hub, code))
         self.db.commit()
+        if cur.rowcount == 0:
+            raise KeyError(code)
 
     def cooldown_until(self, provider: str) -> float:
         r = self.db.execute("SELECT until FROM cooldowns WHERE provider=?", (provider,)).fetchone()

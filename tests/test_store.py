@@ -35,3 +35,15 @@ def test_cooldown_and_meta_persist(tmp_path):
     assert s2.cooldown_until("claude") == 123.0
     assert s2.get_meta("last_categories") == ["a", "b"]
     assert s2.get_meta("nope", []) == []
+
+def test_unknown_code_raises_keyerror(tmp_path):
+    import pytest
+    s = Store(tmp_path / "db.sqlite")
+    with pytest.raises(KeyError):
+        s.update("nope", state="fetched")
+    with pytest.raises(KeyError):
+        s.fail_attempt("nope", "boom", 3)
+    with pytest.raises(KeyError):
+        s.reset("nope")
+    with pytest.raises(KeyError):
+        s.set_hub("nope", "Mac apps")

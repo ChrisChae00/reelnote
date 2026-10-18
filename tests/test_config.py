@@ -21,3 +21,15 @@ def test_unknown_key_rejected(tmp_path):
     p.write_text('typo_key = 1\n')
     with pytest.raises(TypeError):
         load(p)
+
+def test_providers_string_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('providers = "codex"\n')
+    with pytest.raises(ValueError, match="providers must be a list of: claude, codex, grok"):
+        load(p)
+
+def test_unknown_provider_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('providers = ["gemini"]\n')
+    with pytest.raises(ValueError, match="providers must be a list of: claude, codex, grok"):
+        load(p)
