@@ -135,3 +135,22 @@ def test_timeout_moves_to_next_provider(tmp_path):
             raise subprocess.TimeoutExpired(cmd, 900)
         return ok(cmd, {"category": "a"})
     assert Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
+
+
+def test_missing_and_not_logged_in_is_environment_not_bad_output(tmp_path):
+    def runner(cmd, **kw):
+        if cmd[0] == "claude":
+            raise FileNotFoundError("claude")
+        return cp(1, err="Error: not logged in")
+    with pytest.raises(AllProvidersLimited) as e:
+        Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
+    assert str(e.value) == "claude: not found; codex: not logged in"
+
+
+def test_bad_output_wins_when_one_provider_ran(tmp_path):
+    def runner(cmd, **kw):
+        if cmd[0] == "claude":
+            raise FileNotFoundError("claude")
+        return cp(out="not json")
+    with pytest.raises(BadOutput):
+        Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)

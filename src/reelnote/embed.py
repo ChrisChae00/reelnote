@@ -11,7 +11,7 @@ def _post(url: str, body: dict) -> dict:
 
 
 def embed(text: str, url: str, model: str = "bge-m3", post=None) -> list[float]:
-    return (post or _post)(f"{url}/api/embed", {"model": model, "input": text})["embeddings"][0]
+    return (post or _post)(f"{url.rstrip('/')}/api/embed", {"model": model, "input": text})["embeddings"][0]
 
 
 def cosine(a: list[float], b: list[float]) -> float:

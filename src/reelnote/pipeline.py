@@ -16,6 +16,20 @@ from reelnote.shortcode import canonical_url, shortcode
 from reelnote.store import Store
 
 
+class ToolUnavailable(Exception):
+    """A local tool (yt-dlp, ffmpeg, whisper-cli, Ollama) is missing or down: stop the run, count no attempt."""
+
+
+def _tool(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except FileNotFoundError as e:
+        # a bare program name means subprocess could not find the binary; a path means a missing file
+        if e.filename and "/" not in str(e.filename):
+            raise ToolUnavailable(f"{e.filename} not found on PATH") from e
+        raise
+
+
 @dataclass
 class Deps:
     fetch: Callable
@@ -127,7 +141,7 @@ def _step_fetch(rec, cfg, store, deps):
     deps.sleep(cfg.download_gap_seconds)
     workdir = cfg.work_dir / rec.code
     try:
-        dl = deps.fetch(rec.data["video_url"], workdir, cookies_browser=cfg.cookies_browser)
+        dl = _tool(deps.fetch, rec.data["video_url"], workdir, cookies_browser=cfg.cookies_browser)
     except fetch.Unavailable:
         _write_stub(rec, cfg, store)
         return store.get(rec.code)
@@ -141,8 +155,8 @@ def _step_extract(rec, cfg, store, deps):
     if "transcript" not in rec.data:
         if not video.exists():
             return store.update(rec.code, state="queued")
-        rec = store.update(rec.code, data={"transcript": deps.transcript(video, cfg.whisper_model, workdir),
-                                           "screen_text": "\n".join(deps.frame_texts(video, workdir))})
+        rec = store.update(rec.code, data={"transcript": _tool(deps.transcript, video, cfg.whisper_model, workdir),
+                                           "screen_text": "\n".join(_tool(deps.frame_texts, video, workdir))})
     dm, errors = [], []
     for url in rec.data["dm_urls"]:
         try:
@@ -201,7 +215,10 @@ def _step_write(rec, cfg, store, deps, categories):
         category, source = d["category"], "manual"
     else:  # auto, or a manual category that no longer exists
         category, source = (note["category"] if note["category"] in categories else None), "auto"
-    vec = deps.embed(f"{note['title']}\n{note['summary']}\n{' '.join(note['keywords'])}")
+    try:
+        vec = deps.embed(f"{note['title']}\n{note['summary']}\n{' '.join(note['keywords'])}")
+    except OSError as e:  # URLError is an OSError: Ollama is not running
+        raise ToolUnavailable(f"Ollama embed failed: {e}") from e
     m = organize.match(vec, [e for e in store.embeddings() if e[0] != rec.code], cfg.dup_threshold, cfg.hub_threshold)
     status = "review" if d.get("dm_errors") else "done"
     dup = _stem(cfg, store, m.other) if m.kind == "duplicate" else None
@@ -250,8 +267,13 @@ def process_save(item: SaveItem, cfg: Config, store: Store, deps: Deps, categori
                 raise RuntimeError(f"unknown state {before}")
             if rec.state != "queued":
                 store.clear_attempts(code)  # progress: earlier failures no longer count
-    except AllProvidersLimited:
+    except AllProvidersLimited as e:
+        err = ["llm", str(e)]
+        if str(e) and err not in store.get_meta("run_errors", []):
+            _record_error(store, *err)  # once per run, e.g. "claude: not found; codex: not logged in"
         return store.get(code).state
+    except ToolUnavailable:
+        raise
     except Exception as e:  # any step failure counts one attempt; review.md shows the error
         if store.get(code).state == "written":
             return "written"
@@ -392,6 +414,9 @@ def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str,
                 path.rename(cfg.inbox / "failed" / path.name)
             write_reports(cfg, store)
             repo.commit(f"reelnote: {op.id} {state}")
+        except ToolUnavailable as e:  # every later item would hit the same wall
+            _record_error(store, op.id, str(e))
+            break
         except Exception as e:  # one bad item must not block the rest of the inbox
             tally["error"] = tally.get("error", 0) + 1
             _handle_error(op, e, path, cfg, store)

@@ -170,10 +170,10 @@ class Chain:
             raise BadOutput((res.stderr or res.stdout)[-500:])
 
     def run(self, prompt: str, schema: dict) -> dict:
-        limited = 0
+        reasons, ran = [], False  # ran: some provider answered, but with bad output
         for p in self.providers:
             if self.store.cooldown_until(p) > self.now():
-                limited += 1
+                reasons.append(f"{p}: limited")
                 continue
             for attempt in range(2):
                 try:
@@ -181,13 +181,18 @@ class Chain:
                 except LimitReached:
                     # shortcut: fixed cooldown, CLIs do not report a parseable reset time; parse it if Task 0 finds one
                     self.store.set_cooldown(p, self.now() + self.cooldown)
-                    limited += 1
+                    reasons.append(f"{p}: limited")
                     break
-                except (FileNotFoundError, NotLoggedIn):
+                except FileNotFoundError:
+                    reasons.append(f"{p}: not found")
+                    break
+                except NotLoggedIn:
+                    reasons.append(f"{p}: not logged in")
                     break
                 except (BadOutput, subprocess.TimeoutExpired):
                     if attempt == 1:
+                        ran = True
                         break
-        if limited == len(self.providers):
-            raise AllProvidersLimited()
+        if not ran:  # environment trouble, not the item's fault: no attempt is counted
+            raise AllProvidersLimited("; ".join(reasons))
         raise BadOutput("no provider produced valid JSON")

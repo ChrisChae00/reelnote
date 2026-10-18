@@ -44,3 +44,12 @@ def test_clusters_ignores_zero_vectors():
     items = [("a", [1, 0, 0]), ("b", [0.98, 0.05, 0]), ("c", [0, 1, 0]), ("d", [0.02, 0.99, 0]), ("e", [0, 0, 1]), ("z", [0, 0, 0])]
     groups = sorted(sorted(g) for g in clusters(items))
     assert groups == [["a", "b"], ["c", "d"]]
+
+
+def test_embed_strips_trailing_slash():
+    seen = {}
+    def post(url, body):
+        seen["url"] = url
+        return {"embeddings": [[0.1]]}
+    embed("x", "http://localhost:11434/", post=post)
+    assert seen["url"] == "http://localhost:11434/api/embed"

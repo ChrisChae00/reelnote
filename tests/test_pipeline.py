@@ -366,3 +366,47 @@ def test_hub_refresh_skips_missing_member(tmp_path):
     c = store.get("C3")
     assert "hub_error" not in c.data
     assert vault.read_note(cfg.vault / c.note_path)[0]["hub"] == "[[맥 앱]]"
+
+
+def test_no_ai_cli_on_path_burns_no_attempts(tmp_path):
+    from reelnote.llm import Chain
+    cfg, store, deps = make(tmp_path)
+    def runner(cmd, **kw):
+        raise FileNotFoundError(cmd[0])  # launchd PATH without claude/codex
+    deps = replace(deps, llm=Chain(store, ("claude", "codex"), 60, runner=runner))
+    for i in range(3):
+        assert pipeline.process_save(item(id=f"i{i}"), cfg, store, deps, []) == "extracted"
+    rec = store.get("C8xYz2Qp")
+    assert rec.state == "extracted" and rec.attempts == 0
+    errors = store.get_meta("run_errors", [])
+    assert len(errors) == 1 and "claude: not found" in errors[0][1]
+
+
+def test_missing_ffmpeg_does_not_fail_item(tmp_path):
+    def no_ffmpeg(v, m, w):
+        raise FileNotFoundError(2, "No such file or directory", "ffmpeg")
+    cfg, store, deps = make(tmp_path)
+    deps = replace(deps, transcript=no_ffmpeg)
+    for i in range(3):
+        with pytest.raises(pipeline.ToolUnavailable):
+            pipeline.process_save(item(id=f"i{i}"), cfg, store, deps, [])
+    rec = store.get("C8xYz2Qp")
+    assert rec.state == "fetched" and rec.attempts == 0
+
+
+def test_ollama_down_stops_run_without_attempts(tmp_path):
+    import urllib.error
+    def down(text):
+        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+    cfg, store, deps, repo, remote = make_repo(tmp_path)
+    deps = replace(deps, embed=down)
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/")
+    put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/B2/")
+    pipeline.run_once(cfg, store, deps, repo)
+    a = store.get("A1")
+    assert a.state == "summarized" and a.attempts == 0
+    assert store.get("B2") is None  # run stopped before the next item
+    assert (cfg.inbox / "001.json").exists() and (cfg.inbox / "002.json").exists()
+    assert any("Connection refused" in e for _, e in store.get_meta("run_errors"))
+    assert "Connection refused" in (cfg.vault / "review.md").read_text()
+    assert _git(remote, "log", "-1", "--format=%s") == "reelnote: reports\n"
