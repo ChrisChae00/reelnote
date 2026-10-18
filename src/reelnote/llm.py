@@ -21,7 +21,7 @@ HUB_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["nam
               "properties": {"name": {"type": "string"}, "description": {"type": "string"}}}
 
 LIMIT_PATTERNS = re.compile(r"usage limit|rate limit|limit reached|quota|too many requests|\b429\b|hit your limit", re.I)
-AUTH_PATTERNS = re.compile(r"not signed in|not logged in|please run /login|grok login", re.I)
+AUTH_PATTERNS = re.compile(r"not signed in|not logged in|please run /login", re.I)
 _ENVELOPE_KEYS = ("structured_output", "result", "output", "text", "content", "message", "response")
 _MAX_SOURCE_CHARS = 12000
 _PY_TYPES = {"string": str, "array": list, "null": type(None), "object": dict}
@@ -143,11 +143,6 @@ def _command(provider: str, prompt: str, schema: dict, tmp: Path) -> tuple[list[
         return ["codex", "exec", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only",
                 "--skip-git-repo-check", "--output-schema", str(tmp / "schema.json"),
                 "-o", str(out), prompt], out
-    if provider == "grok":
-        # strict/read-only refuse to start on macOS when /var/run/docker.sock is a symlink
-        return ["grok", "-p", prompt, "--json-schema", s, "--disable-web-search", "--sandbox", "workspace",
-                "--disallowed-tools", "run_terminal_cmd,search_replace,web_search,web_fetch",
-                "--max-turns", "1"], None
     raise ValueError(f"unknown provider {provider}")
 
 

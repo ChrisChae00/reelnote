@@ -28,7 +28,7 @@ reelnote lets the user send a Reel link, plus an optional DM link, from the phon
 - Bulk import of past Instagram saves (the "Download your information" export).
 - Matching a DM link sent on its own to an earlier video. A DM link is accepted only together with its video link.
 - A "DM expected" toggle and a sender-account field.
-- Gemini, the xAI API, and Cursor as AI providers.
+- Gemini, Grok, the xAI API, and Cursor as AI providers.
 - Browser automation of the Instagram "Saved" list. It violates the ToS and risks an account ban.
 
 ## 2. Architecture
@@ -134,7 +134,7 @@ reelnote/
     shortcode.py      canonical URL -> shortcode (/reel/, /reels/, /p/ are equal; tracking params dropped)
     fetch.py          yt-dlp: video + caption; optional --cookies-from-browser
     extract.py        whisper.cpp transcript; ffmpeg frames (1 fps, near-duplicates dropped) -> Vision OCR; DM page text (HTML main text, PDF text)
-    llm.py            provider chain: claude -p -> codex exec -> grok -p; JSON-schema validation; limit detection
+    llm.py            provider chain: claude -p -> codex exec; JSON-schema validation; limit detection
     index.py          SQLite: item state, embeddings (Ollama bge-m3), similarity queries
     organize.py       hub assignment; `regroup` re-clusters unassigned notes (HDBSCAN); pinned hubs never change
     categories.py     parse categories.md, diff against last-seen, apply rename ops
@@ -165,8 +165,8 @@ Thresholds for step 5 are tuned on real data and stored in config.
 
 ### 5.3 AI provider chain
 
-- **Order:** `claude -p` (Claude Pro), then `codex exec` (ChatGPT Plus), then `grok -p` (Grok subscription login).
-- **Common contract:** every provider gets the same prompt and must return JSON matching one schema. Grok enforces the schema with `--json-schema`; the others are validated after the call.
+- **Order:** `claude -p` (Claude Pro), then `codex exec` (ChatGPT Plus). Grok was removed: its strict sandbox cannot start on macOS, and untrusted Reel text must not reach a CLI that can read local files.
+- **Common contract:** every provider gets the same prompt and must return JSON matching one schema. Claude enforces it with `--json-schema`, Codex with `--output-schema`; results are validated after the call.
 - **Usage limit:** the provider is skipped until its reset time, which is stored in SQLite. Once that time passes, the chain returns to Claude first.
 - **Invalid JSON:** one retry on the same provider, then the next provider.
 - **All providers limited:** the item stays at `extracted` and is retried on the next run.
@@ -238,6 +238,6 @@ Rules that protect hand edits:
 |---|---|
 | GitHub private repo, Scriptable, Obsidian, Obsidian Git | free |
 | yt-dlp, ffmpeg, whisper.cpp, Ollama + bge-m3, macOS Vision | free |
-| AI (Claude Pro, ChatGPT Plus, Grok) | existing subscriptions |
+| AI (Claude Pro, ChatGPT Plus) | existing subscriptions |
 | Optional later: Apple Developer Program for a native app | $99/year |
 | Optional later: Obsidian Sync instead of Obsidian Git | about $4–5/month |

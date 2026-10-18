@@ -9,6 +9,13 @@ NOTE = {"title": "맥북 생산성 앱 7개", "summary": "s", "key_facts": ["Ray
 def cp(code=0, out="", err=""):
     return subprocess.CompletedProcess([], code, out, err)
 
+def ok(cmd, obj):
+    # codex writes its answer to the -o file; the others print it
+    if "-o" in cmd:
+        open(cmd[cmd.index("-o") + 1], "w").write(json.dumps(obj))
+        return cp()
+    return cp(out=json.dumps(obj))
+
 def test_extract_json_envelopes():
     assert extract_json(json.dumps(NOTE), NOTE_SCHEMA) == NOTE
     assert extract_json(json.dumps({"type": "result", "structured_output": NOTE}), NOTE_SCHEMA) == NOTE
@@ -24,7 +31,7 @@ def test_first_provider_success(tmp_path):
     calls = []
     def runner(cmd, **kw):
         calls.append(cmd[0]); return cp(out=json.dumps({"structured_output": NOTE}))
-    assert Chain(Store(tmp_path / "db"), ("claude", "codex", "grok"), 60, runner=runner).run("p", NOTE_SCHEMA) == NOTE
+    assert Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", NOTE_SCHEMA) == NOTE
     assert calls == ["claude"]
 
 def test_limit_falls_back_and_sets_cooldown(tmp_path):
@@ -32,8 +39,8 @@ def test_limit_falls_back_and_sets_cooldown(tmp_path):
     def runner(cmd, **kw):
         if cmd[0] == "claude":
             return cp(1, err="Claude usage limit reached. Your limit will reset at 5pm")
-        return cp(out=json.dumps({"category": "생산성"}))
-    out = Chain(store, ("claude", "grok"), 60, runner=runner, now=lambda: 1000.0).run("p", CLASSIFY_SCHEMA)
+        return ok(cmd, {"category": "생산성"})
+    out = Chain(store, ("claude", "codex"), 60, runner=runner, now=lambda: 1000.0).run("p", CLASSIFY_SCHEMA)
     assert out == {"category": "생산성"}
     assert store.cooldown_until("claude") == 1000.0 + 3600
 
@@ -41,23 +48,23 @@ def test_cooled_down_provider_skipped_until_reset(tmp_path):
     store = Store(tmp_path / "db"); store.set_cooldown("claude", 2000.0)
     calls = []
     def runner(cmd, **kw):
-        calls.append(cmd[0]); return cp(out=json.dumps({"category": "a"}))
-    Chain(store, ("claude", "grok"), 60, runner=runner, now=lambda: 1500.0).run("p", CLASSIFY_SCHEMA)
-    Chain(store, ("claude", "grok"), 60, runner=runner, now=lambda: 2500.0).run("p", CLASSIFY_SCHEMA)
-    assert calls == ["grok", "claude"]
+        calls.append(cmd[0]); return ok(cmd, {"category": "a"})
+    Chain(store, ("claude", "codex"), 60, runner=runner, now=lambda: 1500.0).run("p", CLASSIFY_SCHEMA)
+    Chain(store, ("claude", "codex"), 60, runner=runner, now=lambda: 2500.0).run("p", CLASSIFY_SCHEMA)
+    assert calls == ["codex", "claude"]
 
 def test_all_limited(tmp_path):
     runner = lambda cmd, **kw: cp(1, err="429 Too Many Requests")
     with pytest.raises(AllProvidersLimited):
-        Chain(Store(tmp_path / "db"), ("claude", "codex", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
+        Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
 
 def test_bad_output_retried_once_then_next_provider(tmp_path):
     calls = []
     def runner(cmd, **kw):
         calls.append(cmd[0])
         return cp(out="not json") if cmd[0] == "claude" else cp(out=json.dumps({"category": "a"}))
-    Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
-    assert calls == ["claude", "claude", "grok"]
+    Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
+    assert calls == ["claude", "claude", "codex"]
 
 def test_codex_reads_output_file(tmp_path):
     def runner(cmd, **kw):
@@ -71,8 +78,8 @@ def test_missing_cli_skipped(tmp_path):
     def runner(cmd, **kw):
         if cmd[0] == "claude":
             raise FileNotFoundError("claude")
-        return cp(out=json.dumps({"category": "a"}))
-    assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
+        return ok(cmd, {"category": "a"})
+    assert Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
 
 def test_not_logged_in_skipped_without_cooldown(tmp_path):
     store = Store(tmp_path / "db")
@@ -81,15 +88,15 @@ def test_not_logged_in_skipped_without_cooldown(tmp_path):
         calls.append(cmd[0])
         if cmd[0] == "claude":
             return cp(0, out=json.dumps({"is_error": True, "result": "Not logged in · Please run /login"}))
-        return cp(out=json.dumps({"category": "a"}))
-    assert Chain(store, ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
-    assert calls == ["claude", "grok"]
+        return ok(cmd, {"category": "a"})
+    assert Chain(store, ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
+    assert calls == ["claude", "codex"]
     assert store.cooldown_until("claude") == 0.0
 
 def test_claude_command_uses_light_flags(tmp_path):
     seen = []
     def runner(cmd, **kw):
-        seen.append(cmd); return cp(out=json.dumps({"category": "a"}))
+        seen.append(cmd); return ok(cmd, {"category": "a"})
     Chain(Store(tmp_path / "db"), ("claude",), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
     cmd = seen[0]
     assert "--tools" in cmd and "--setting-sources" in cmd and "--strict-mcp-config" in cmd
@@ -108,17 +115,6 @@ def test_codex_command_skips_user_config(tmp_path):
     assert seen[0][seen[0].index("--sandbox") + 1] == "read-only"
 
 
-def test_grok_command_is_sandboxed(tmp_path):
-    seen = []
-    def runner(cmd, **kw):
-        seen.append(cmd); return cp(out=json.dumps({"category": "a"}))
-    Chain(Store(tmp_path / "db"), ("grok",), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
-    cmd = seen[0]
-    assert cmd[cmd.index("--sandbox") + 1] == "workspace"
-    assert "run_terminal_cmd" in cmd[cmd.index("--disallowed-tools") + 1]
-    assert cmd[cmd.index("--max-turns") + 1] == "1"
-
-
 def test_note_prompt_marks_sources_untrusted():
     p = note_prompt(caption="c", transcript="t", screen_text="s", dm_texts=[], memos=[], categories=[], fixed_category=None)
     assert "untrusted data" in p
@@ -129,7 +125,7 @@ def test_valid_note_mentioning_login_is_accepted(tmp_path):
     note = {**NOTE, "title": "grok login 하는 법 (not logged in 해결)"}
     def runner(cmd, **kw):
         calls.append(cmd[0]); return cp(out=json.dumps({"structured_output": note}))
-    assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", NOTE_SCHEMA) == note
+    assert Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", NOTE_SCHEMA) == note
     assert calls == ["claude"]
 
 
@@ -137,5 +133,5 @@ def test_timeout_moves_to_next_provider(tmp_path):
     def runner(cmd, **kw):
         if cmd[0] == "claude":
             raise subprocess.TimeoutExpired(cmd, 900)
-        return cp(out=json.dumps({"category": "a"}))
-    assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
+        return ok(cmd, {"category": "a"})
+    assert Chain(Store(tmp_path / "db"), ("claude", "codex"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}

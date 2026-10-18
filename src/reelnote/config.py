@@ -9,7 +9,7 @@ class Config:
     data_repo: Path
     state_dir: Path
     cookies_browser: str | None = None
-    providers: tuple[str, ...] = ("claude", "codex", "grok")
+    providers: tuple[str, ...] = ("claude", "codex")
     cooldown_minutes: int = 60
     dup_threshold: float = 0.92
     hub_threshold: float = 0.75
@@ -42,8 +42,8 @@ def load(path: Path | None = None) -> Config:
     state_dir = Path(raw.pop("state_dir", "~/.local/state/reelnote")).expanduser()
     if "providers" in raw:
         names = raw["providers"]
-        if not isinstance(names, list) or not all(n in ("claude", "codex", "grok") for n in names):
-            raise ValueError("providers must be a list of: claude, codex, grok")
+        if not isinstance(names, list) or not all(n in ("claude", "codex") for n in names):
+            raise ValueError("providers must be a list of: claude, codex")
         raw["providers"] = tuple(names)
     if "whisper_model" in raw:
         raw["whisper_model"] = Path(raw["whisper_model"]).expanduser()

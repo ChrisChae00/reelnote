@@ -31,7 +31,7 @@ Personal data (links, notes, videos, transcripts) and secrets (GitHub token, bro
 ## Stack
 
 - **Mac:** Python (`uv`), `yt-dlp`, `ffmpeg`, `whisper.cpp`, macOS Vision OCR, Ollama `bge-m3`, SQLite.
-- **AI:** Subscription-login CLIs only, with no pay-per-use API. The pipeline starts with `claude -p`. When that hits its usage limit, it falls back to `codex exec`, then to `grok -p`.
+- **AI:** Subscription-login CLIs only, with no pay-per-use API. The pipeline starts with `claude -p`. When that hits its usage limit, it falls back to `codex exec`.
 - **Phone:** [Scriptable](https://scriptable.app) (iOS, free). It can move to a SwiftUI app later if needed.
 
 ## Cost

@@ -4,7 +4,7 @@ from reelnote.config import load
 
 def test_defaults_when_file_missing(tmp_path):
     cfg = load(tmp_path / "missing.toml")
-    assert cfg.providers == ("claude", "codex", "grok")
+    assert cfg.providers == ("claude", "codex")
     assert cfg.max_attempts == 3
     assert cfg.vault == cfg.data_repo / "vault"
 
@@ -25,11 +25,11 @@ def test_unknown_key_rejected(tmp_path):
 def test_providers_string_rejected(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text('providers = "codex"\n')
-    with pytest.raises(ValueError, match="providers must be a list of: claude, codex, grok"):
+    with pytest.raises(ValueError, match="providers must be a list of: claude, codex"):
         load(p)
 
 def test_unknown_provider_rejected(tmp_path):
     p = tmp_path / "c.toml"
-    p.write_text('providers = ["gemini"]\n')
-    with pytest.raises(ValueError, match="providers must be a list of: claude, codex, grok"):
+    p.write_text('providers = ["grok"]\n')
+    with pytest.raises(ValueError, match="providers must be a list of: claude, codex"):
         load(p)
