@@ -37,3 +37,20 @@ Personal data (links, notes, videos, transcripts) and secrets (GitHub token, bro
 ## Cost
 
 The current design adds no cost. Every tool is free, and the AI calls go through subscriptions you already have.
+
+## Setup (Mac)
+
+```bash
+brew install yt-dlp whisper-cpp ffmpeg
+ollama pull bge-m3
+mkdir -p ~/.cache/reelnote && curl -L -o ~/.cache/reelnote/ggml-large-v3-turbo.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+git clone https://github.com/<you>/reelnote-data ~/reelnote-data
+mkdir -p ~/.config/reelnote && cp config.example.toml ~/.config/reelnote/config.toml
+uv sync
+uv run reelnote run          # first run by hand; check ~/reelnote-data/vault
+sed -e "s#__REPO__#$PWD#" -e "s#__HOME__#$HOME#" launchd/com.reelnote.run.plist > ~/Library/LaunchAgents/com.reelnote.run.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.reelnote.run.plist
+```
+
+Log in to `claude` and `codex` once in a terminal before enabling launchd. `uv run reelnote status` shows item states and which AI providers are cooling down. `uv run reelnote regroup` groups unassigned notes into new hubs.

@@ -1,0 +1,9 @@
+# Copy to ~/.config/reelnote/config.toml
+data_repo = "~/reelnote-data"
+state_dir = "~/.local/state/reelnote"
+# cookies_browser = "chrome"   # only if yt-dlp hits Instagram's login wall
+providers = ["claude", "codex"]
+cooldown_minutes = 60
+dup_threshold = 0.92
+hub_threshold = 0.75
+download_gap_seconds = 5
