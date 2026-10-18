@@ -114,7 +114,7 @@ def test_grok_command_is_sandboxed(tmp_path):
         seen.append(cmd); return cp(out=json.dumps({"category": "a"}))
     Chain(Store(tmp_path / "db"), ("grok",), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
     cmd = seen[0]
-    assert cmd[cmd.index("--sandbox") + 1] == "strict"
+    assert cmd[cmd.index("--sandbox") + 1] == "workspace"
     assert "run_terminal_cmd" in cmd[cmd.index("--disallowed-tools") + 1]
     assert cmd[cmd.index("--max-turns") + 1] == "1"
 

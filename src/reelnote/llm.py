@@ -144,7 +144,8 @@ def _command(provider: str, prompt: str, schema: dict, tmp: Path) -> tuple[list[
                 "--skip-git-repo-check", "--output-schema", str(tmp / "schema.json"),
                 "-o", str(out), prompt], out
     if provider == "grok":
-        return ["grok", "-p", prompt, "--json-schema", s, "--disable-web-search", "--sandbox", "strict",
+        # strict/read-only refuse to start on macOS when /var/run/docker.sock is a symlink
+        return ["grok", "-p", prompt, "--json-schema", s, "--disable-web-search", "--sandbox", "workspace",
                 "--disallowed-tools", "run_terminal_cmd,search_replace,web_search,web_fetch",
                 "--max-turns", "1"], None
     raise ValueError(f"unknown provider {provider}")
