@@ -87,14 +87,23 @@ def test_dirty_tree_is_committed_not_stashed(remote_and_clones):
     _seed_note(mac, phone, "a.md")
     (phone / "vault" / "a.md").write_text("phone\n"); _commit_push(phone, "p")
     (mac / "vault" / "a.md").write_text("mac-change\n")
-    try:
+    with pytest.raises(SyncError):
         DataRepo(mac).pull()
-        assert "<<<<<<<" not in "".join(
-            (mac / f).read_text() for f in _out(mac, "ls-files").split())
-    except SyncError:
-        pass
+    assert not _rebasing(mac)
+    assert all("<<<<<<<" not in (mac / f).read_text() for f in _out(mac, "ls-files").split())
     assert "mac-change" in _out(mac, "log", "-p", "--all")
     assert _out(mac, "stash", "list") == ""
+
+
+def test_dirty_tree_non_conflicting_pull_succeeds(remote_and_clones):
+    mac, phone = remote_and_clones
+    _seed_note(mac, phone, "a.md")
+    (phone / "vault" / "b.md").write_text("phone-b\n"); _commit_push(phone, "p")
+    (mac / "vault" / "a.md").write_text("mac-change\n")
+    DataRepo(mac).pull()
+    assert (mac / "vault" / "b.md").read_text() == "phone-b\n"
+    assert "mac-change" in _out(mac, "log", "-p")
+    assert _out(mac, "status", "--porcelain") == ""
 
 
 def test_push_failure_surfaces_stderr(remote_and_clones):
@@ -123,12 +132,14 @@ def test_multiple_local_commits_each_conflicting_on_categories(remote_and_clones
 
 def test_stale_rebase_is_recovered(remote_and_clones):
     mac, phone = remote_and_clones
-    _seed_note(mac, phone)
-    (phone / "vault" / "note.md").write_text("phone\n"); _commit_push(phone, "p")
-    (mac / "vault" / "note.md").write_text("mac\n")
-    git(mac, "commit", "-qam", "mac")
+    (phone / "vault" / "categories.md").write_text("# c\nphone\n"); _commit_push(phone, "p")
+    (mac / "vault" / "categories.md").write_text("# c\nmac\n")
+    (mac / "vault" / "keep.md").write_text("keep")
+    git(mac, "add", "-A"); git(mac, "commit", "-qm", "mac")
     subprocess.run(["git", "-C", str(mac), "pull", "--rebase", "-q"], capture_output=True)
     assert _rebasing(mac)
-    with pytest.raises(SyncError):
-        DataRepo(mac).pull()
+    DataRepo(mac).pull()
     assert not _rebasing(mac)
+    assert (mac / "vault" / "categories.md").read_text() == "# c\nphone\n"
+    assert (mac / "vault" / "keep.md").read_text() == "keep"
+    assert _out(mac, "status", "--porcelain") == ""
