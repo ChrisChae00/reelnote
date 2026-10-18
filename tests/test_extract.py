@@ -63,6 +63,11 @@ def test_check_url_accepts_public(monkeypatch):
     ex._check_url("https://example.com/")
 
 
+def test_check_url_accepts_public_ipv6(monkeypatch):
+    _resolve_to(monkeypatch, "2606:2800:220:1:248:1893:25c8:1946")
+    ex._check_url("https://example.com/")
+
+
 def test_redirect_to_metadata_rejected():
     h = ex._CheckedRedirect()
     req = urllib.request.Request("https://example.com/")
@@ -139,7 +144,18 @@ def test_env_proxy_ignored(monkeypatch):
     assert used == [("93.184.216.34", 80)]
 
 
-@pytest.mark.parametrize("ip", ["100.64.0.1", "64:ff9b::7f00:1", "2002:c0a8:0101::1", "198.18.0.1"])
+@pytest.mark.parametrize(
+    "ip",
+    [
+        "100.64.0.1",
+        "64:ff9b::7f00:1",
+        "2002:c0a8:0101::1",
+        "198.18.0.1",
+        "fec0::1",
+        "::7f00:1",
+        "2002:7f00:1::1",
+    ],
+)
 def test_non_global_addresses_rejected(monkeypatch, ip):
     _resolve_to(monkeypatch, ip)
     with pytest.raises(PageUnavailable):

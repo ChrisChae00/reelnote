@@ -78,6 +78,9 @@ def _check_ip(ip_str: str, url: str):
             ip = ip.sixtofour
         elif ip in ipaddress.ip_network("64:ff9b::/96"):
             ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif ip not in ipaddress.ip_network("2000::/3"):
+            # is_global still passes deprecated site-local fec0::/10 and IPv4-compatible ::/96
+            raise PageUnavailable(f"{url}: refusing non-public address {ip}")
     if not ip.is_global or ip.is_multicast:
         raise PageUnavailable(f"{url}: refusing non-public address {ip}")
     return ip
