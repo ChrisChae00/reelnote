@@ -144,3 +144,146 @@ def test_reclassify_removed_category(tmp_path):
     fm, _ = vault.read_note(only_note(cfg))
     assert fm["category"] == "생산성" and fm["category_source"] == "auto"
     assert store.get_meta("last_categories") == ["생산성"]
+
+
+# ---- fix round 1 ----
+import subprocess
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
+
+
+def make_repo(tmp_path, categories=None, **kw):
+    """Local bare remote + 'mac' clone; run_once pushes only to this tmp remote."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(remote), str(seed)], check=True, capture_output=True)
+    (seed / "inbox").mkdir()
+    (seed / "inbox" / ".gitkeep").write_text("")
+    if categories is not None:
+        (seed / "vault").mkdir()
+        (seed / "vault" / "categories.md").write_text(categories)
+    for c in (seed,):
+        _git(c, "config", "user.email", "t@t"); _git(c, "config", "user.name", "t"); _git(c, "config", "commit.gpgsign", "false")
+    _git(seed, "add", "-A"); _git(seed, "commit", "-qm", "seed"); _git(seed, "push", "-q", "origin", "main")
+    mac = tmp_path / "mac"
+    subprocess.run(["git", "clone", "-q", str(remote), str(mac)], check=True, capture_output=True)
+    _git(mac, "config", "user.email", "t@t"); _git(mac, "config", "user.name", "t"); _git(mac, "config", "commit.gpgsign", "false")
+    cfg = Config(data_repo=mac, state_dir=tmp_path / "state", download_gap_seconds=0)
+    (cfg.vault / "notes").mkdir(parents=True, exist_ok=True)
+    store = Store(cfg.db_path)
+
+    def default_fetch(url, workdir, cookies_browser=None):
+        workdir.mkdir(parents=True, exist_ok=True)
+        v = workdir / "v.mp4"; v.write_bytes(b"\0")
+        return Download(video=v, caption="c", author="a")
+    deps = pipeline.Deps(fetch=kw.get("fetch", default_fetch), transcript=lambda v, m, w: "t",
+                         frame_texts=lambda v, w: ["x"], page_text=lambda u: "p", llm=FakeLLM(),
+                         embed=lambda text: [1.0, 0.0], sleep=lambda s: None)
+    from reelnote.datarepo import DataRepo
+    return cfg, store, deps, DataRepo(mac), remote
+
+
+def put_inbox(cfg, name, **fields):
+    d = {"op": "save", "dm_url": None, "memo": None, "category": "auto", "created_at": "2026-10-17T18:30:12+09:00"}
+    d.update(fields)
+    (cfg.inbox / name).write_text(json.dumps(d))
+
+
+def test_run_once_bad_item_does_not_block_others(tmp_path):
+    def fetch(url, workdir, cookies_browser=None):
+        if "BAD" in url:
+            raise RuntimeError("boom")
+        workdir.mkdir(parents=True, exist_ok=True)
+        v = workdir / "v.mp4"; v.write_bytes(b"\0")
+        return Download(video=v, caption="c", author="a")
+    cfg, store, deps, repo, remote = make_repo(tmp_path, categories="# c\n생산성\n", fetch=fetch)
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/BAD1/")
+    put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/GOOD2/")
+    tally = pipeline.run_once(cfg, store, deps, repo)
+    assert tally["written"] == 1
+    assert (cfg.inbox / "001.json").exists() and not (cfg.inbox / "002.json").exists()
+    check = tmp_path / "check"
+    subprocess.run(["git", "clone", "-q", str(remote), str(check)], check=True, capture_output=True)
+    assert len(list((check / "vault" / "notes").glob("*.md"))) == 1
+    assert not (check / "inbox" / "002.json").exists() and (check / "inbox" / "001.json").exists()
+
+
+def test_run_once_isolates_unexpected_exception(tmp_path):
+    cfg, store, deps, repo, remote = make_repo(tmp_path, categories="# c\n생산성\n")
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/BAD1/")
+    put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/GOOD2/")
+    real = pipeline.process_save
+
+    def flaky(op, *a):
+        if "BAD1" in op.video_url:
+            raise ValueError("unexpected")
+        return real(op, *a)
+    orig, pipeline.process_save = pipeline.process_save, flaky
+    try:
+        tally = pipeline.run_once(cfg, store, deps, repo)
+    finally:
+        pipeline.process_save = orig
+    assert tally["error"] == 1 and tally["written"] == 1
+    assert (cfg.inbox / "001.json").exists()
+    assert ["001", "unexpected"] in store.get_meta("run_errors")
+    assert "unexpected" in (cfg.vault / "review.md").read_text()
+
+
+def test_merge_does_not_duplicate_memo(tmp_path):
+    cfg, store, deps = make(tmp_path)
+    pipeline.process_save(item(memo="같은 메모"), cfg, store, deps, [])
+    assert pipeline.process_save(item(id="i2", memo="같은 메모"), cfg, store, deps, []) == "merged"
+    assert pipeline.process_save(item(id="i3", memo="새 메모"), cfg, store, deps, []) == "merged"
+    assert pipeline.process_save(item(id="i4", memo="새 메모"), cfg, store, deps, []) == "merged"
+    _, body = vault.read_note(only_note(cfg))
+    assert body.count("- 같은 메모") == 1 and body.count("- 새 메모") == 1
+    assert store.get("C8xYz2Qp").data["memos"] == ["같은 메모", "새 메모"]
+
+
+class HubFailLLM(FakeLLM):
+    def run(self, prompt, schema):
+        if schema is HUB_SCHEMA:
+            raise RuntimeError("hub llm down")
+        return super().run(prompt, schema)
+
+
+def test_hub_error_keeps_written(tmp_path):
+    cfg, store, deps = make(tmp_path, vec=(1.0, 0.0))
+    pipeline.process_save(item(code="A1"), cfg, store, deps, [])
+    deps = replace(deps, llm=HubFailLLM(), embed=lambda t: [0.8, 0.6])
+    assert pipeline.process_save(item(id="i2", code="B2"), cfg, store, deps, []) == "written"
+    rec = store.get("B2")
+    assert rec.state == "written" and rec.attempts == 0
+    assert "hub llm down" in rec.data["hub_error"]
+
+
+def test_rename_then_save_order(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    (cfg.inbox / "002.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "Y" and fm["category_source"] == "manual"
+
+
+def test_save_after_rename_with_old_category_is_auto(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    (cfg.inbox / "001.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
+    put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category_source"] == "auto" and fm["category"] is None
+
+
+def test_missing_categories_file_skips_reclassify(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path)
+    assert not (cfg.vault / "categories.md").exists()
+    pipeline.process_save(item(category="a"), cfg, store, deps, ["a"])
+    store.set_meta("last_categories", ["a"])
+    pipeline.run_once(cfg, store, deps, repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "a" and fm["category_source"] == "manual"
+    assert store.get_meta("last_categories") == ["a"]

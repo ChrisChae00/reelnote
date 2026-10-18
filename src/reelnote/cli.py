@@ -7,7 +7,7 @@ from pathlib import Path
 
 from reelnote import pipeline
 from reelnote.config import load
-from reelnote.datarepo import DataRepo
+from reelnote.datarepo import DataRepo, SyncError
 from reelnote.store import Store
 
 
@@ -49,14 +49,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         repo = DataRepo(cfg.data_repo)
         deps = pipeline.Deps.real(cfg, store)
-        if args.command == "run":
-            print(pipeline.run_once(cfg, store, deps, repo))
-        else:
-            repo.pull()
-            print(f"new hubs: {pipeline.regroup(cfg, store, deps)}")
-            pipeline.write_reports(cfg, store)
-            repo.commit("reelnote: regroup")
-            repo.push()
+        try:
+            if args.command == "run":
+                print(pipeline.run_once(cfg, store, deps, repo))
+            else:
+                repo.pull()
+                print(f"new hubs: {pipeline.regroup(cfg, store, deps)}")
+                pipeline.write_reports(cfg, store)
+                repo.commit("reelnote: regroup")
+                repo.push()
+        except SyncError as e:
+            print(f"reelnote: sync failed: {e}", file=sys.stderr)
+            return 1
     return 0
 
 

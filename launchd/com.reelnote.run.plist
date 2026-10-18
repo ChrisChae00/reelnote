@@ -8,6 +8,7 @@
     <string>/bin/zsh</string><string>-lc</string>
     <string>cd "__REPO__" &amp;&amp; uv run reelnote run</string>
   </array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>900</integer>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/reelnote.log</string>

@@ -49,8 +49,9 @@ git clone https://github.com/<you>/reelnote-data ~/reelnote-data
 mkdir -p ~/.config/reelnote && cp config.example.toml ~/.config/reelnote/config.toml
 uv sync
 uv run reelnote run          # first run by hand; check ~/reelnote-data/vault
+env -i HOME=$HOME /bin/zsh -lc 'command -v uv claude codex yt-dlp ffmpeg whisper-cli ollama git'
 sed -e "s#__REPO__#$PWD#" -e "s#__HOME__#$HOME#" launchd/com.reelnote.run.plist > ~/Library/LaunchAgents/com.reelnote.run.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.reelnote.run.plist
 ```
 
-Log in to `claude` and `codex` once in a terminal before enabling launchd. `uv run reelnote status` shows item states and which AI providers are cooling down. `uv run reelnote regroup` groups unassigned notes into new hubs.
+Every tool must print a path; launchd runs with this PATH. Log in to `claude` and `codex` once in a terminal before enabling launchd. `uv run reelnote status` shows item states and which AI providers are cooling down. `uv run reelnote regroup` groups unassigned notes into new hubs.

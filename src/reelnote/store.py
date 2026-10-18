@@ -71,6 +71,11 @@ class Store:
         self.db.commit()
         return self.get(code)
 
+    def clear_attempts(self, code: str) -> None:
+        self._existing(code)
+        self.db.execute("UPDATE items SET attempts=0 WHERE code=?", (code,))
+        self.db.commit()
+
     def reset(self, code: str) -> Item:
         self._existing(code)
         self.db.execute("UPDATE items SET attempts=0, last_error=NULL, state='queued' WHERE code=?", (code,))

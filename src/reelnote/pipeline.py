@@ -45,8 +45,9 @@ def _stem(store: Store, code: str) -> str | None:
 def _merge_into_written(item: SaveItem, cfg: Config, store: Store, deps: Deps) -> str:
     rec = store.get(shortcode(item.video_url))
     path = cfg.vault / rec.note_path
-    if item.memo:
+    if item.memo and item.memo not in rec.data["memos"]:
         vault.append_to_section(path, "My memo", f"- {item.memo}")
+        rec = store.update(rec.code, data={"memos": rec.data["memos"] + [item.memo]})
     if item.dm_url and item.dm_url not in rec.data["dm_urls"]:
         fm, _ = vault.read_note(path)
         try:
@@ -161,11 +162,24 @@ def _refresh_hub(cfg, store, name, description=None, category=None):
         vault.update_frontmatter(_notes_dir(cfg) / f"{stem}.md", hub=f"[[{vault.safe_name(name)}]]")
 
 
+def _hub_work(rec, m, cfg, store, deps, category):
+    note = rec.data["note"]
+    if m.kind in ("hub", "duplicate") and m.hub:
+        store.set_hub(rec.code, m.hub)
+        _refresh_hub(cfg, store, m.hub, category=category)
+    elif m.kind == "new_hub":
+        other = store.get(m.other)
+        named = deps.llm.run(hub_prompt(titles=[note["title"], other.data["note"]["title"]]), HUB_SCHEMA)
+        for code in (rec.code, m.other):
+            store.set_hub(code, named["name"])
+        _refresh_hub(cfg, store, named["name"], description=named["description"], category=category)
+
+
 def _step_write(rec, cfg, store, deps, categories):
     d, note = rec.data, rec.data["note"]
-    if d["category"] != AUTO:
+    if d["category"] != AUTO and d["category"] in categories:
         category, source = d["category"], "manual"
-    else:
+    else:  # auto, or a manual category that no longer exists
         category, source = (note["category"] if note["category"] in categories else None), "auto"
     vec = deps.embed(f"{note['title']}\n{note['summary']}\n{' '.join(note['keywords'])}")
     m = organize.match(vec, [e for e in store.embeddings() if e[0] != rec.code], cfg.dup_threshold, cfg.hub_threshold)
@@ -180,15 +194,10 @@ def _step_write(rec, cfg, store, deps, categories):
     rec = store.update(rec.code, state="written", note_path=str(path.relative_to(cfg.vault)),
                        data={"duplicate_of": dup})
     store.put_embedding(rec.code, vec)
-    if m.kind in ("hub", "duplicate") and m.hub:
-        store.set_hub(rec.code, m.hub)
-        _refresh_hub(cfg, store, m.hub, category=category)
-    elif m.kind == "new_hub":
-        other = store.get(m.other)
-        named = deps.llm.run(hub_prompt(titles=[note["title"], other.data["note"]["title"]]), HUB_SCHEMA)
-        for code in (rec.code, m.other):
-            store.set_hub(code, named["name"])
-        _refresh_hub(cfg, store, named["name"], description=named["description"], category=category)
+    try:  # the note is already written: hub trouble must never fail the item
+        _hub_work(rec, m, cfg, store, deps, category)
+    except Exception as e:
+        rec = store.update(rec.code, data={"hub_error": str(e) or type(e).__name__})
     return rec
 
 
@@ -202,19 +211,24 @@ def process_save(item: SaveItem, cfg: Config, store: Store, deps: Deps, categori
     rec = _ensure_record(item, store)
     try:
         while rec.state != "written":
-            if rec.state == "queued":
+            before = rec.state
+            if before == "queued":
                 rec = _step_fetch(rec, cfg, store, deps)
-                if rec.state == "queued":
-                    continue
-            elif rec.state == "fetched":
+            elif before == "fetched":
                 rec = _step_extract(rec, cfg, store, deps)
-            elif rec.state == "extracted":
+            elif before == "extracted":
                 rec = _step_summarize(rec, cfg, store, deps, categories)
-            elif rec.state == "summarized":
+            elif before == "summarized":
                 rec = _step_write(rec, cfg, store, deps, categories)
+            else:
+                raise RuntimeError(f"unknown state {before}")
+            if rec.state != "queued":
+                store.clear_attempts(code)  # progress: earlier failures no longer count
     except AllProvidersLimited:
         return store.get(code).state
     except Exception as e:  # any step failure counts one attempt; review.md shows the error
+        if store.get(code).state == "written":
+            return "written"
         return store.fail_attempt(code, str(e) or type(e).__name__, cfg.max_attempts).state
     return "written"
 
@@ -270,7 +284,8 @@ def write_reports(cfg: Config, store: Store) -> None:
     vault.write_review(
         cfg.vault / "review.md",
         duplicates=[(stems[r.code], r.data["duplicate_of"]) for r in items if r.data.get("duplicate_of") and r.code in stems],
-        failed=[(r.data.get("video_url", r.code), r.last_error or "") for r in items if r.state == "failed"],
+        failed=[(r.data.get("video_url", r.code), r.last_error or "") for r in items if r.state == "failed"]
+        + [(i, e) for i, e in store.get_meta("run_errors", [])],
         unavailable=[stems[r.code] for r in items if r.data.get("unavailable") and r.code in stems],
         dm_errors=[(stems[r.code], err) for r in items if r.code in stems for _, err in r.data.get("dm_errors", [])])
     counts: dict[str, int] = {}
@@ -284,11 +299,32 @@ def write_reports(cfg: Config, store: Store) -> None:
     vault.write_counts(cfg.vault / ".reelnote" / "category-counts.json", counts)
 
 
+def _read_categories(cfg: Config) -> list[str] | None:
+    f = cfg.vault / "categories.md"
+    return cats_mod.parse(f.read_text()) if f.exists() else None
+
+
+def _record_error(store: Store, inbox_id: str, error: str) -> None:
+    store.set_meta("run_errors", store.get_meta("run_errors", []) + [[inbox_id, error]])
+
+
+def _handle_error(op, e: Exception, path: Path, cfg: Config, store: Store) -> None:
+    err = str(e) or type(e).__name__
+    rec = store.get(shortcode(op.video_url)) if isinstance(op, SaveItem) else None
+    if rec is None or rec.state == "written":
+        _record_error(store, op.id, err)  # written notes never accumulate failed attempts
+        return
+    if store.fail_attempt(rec.code, err, cfg.max_attempts).state == "failed":
+        (cfg.inbox / "failed").mkdir(exist_ok=True)
+        path.rename(cfg.inbox / "failed" / path.name)
+
+
 def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str, int]:
     tally: dict[str, int] = {}
+    store.set_meta("run_errors", [])
     repo.pull()
     parsed = []
-    for path in repo.inbox_files():
+    for path in repo.inbox_files():  # sorted by name = arrival order
         try:
             parsed.append((path, parse_item(path)))
         except InvalidInboxItem as e:
@@ -297,28 +333,34 @@ def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str,
             path.rename(failed_dir / path.name)
             (failed_dir / f"{path.stem}.error.txt").write_text(str(e))
             tally["invalid"] = tally.get("invalid", 0) + 1
+    current = _read_categories(cfg)
+    if current is not None:  # no categories.md: do not treat every category as deleted
+        try:
+            reclassify_removed(cfg, store, deps, current)
+        except AllProvidersLimited:
+            pass  # retried next run because last_categories was not updated
+        except Exception as e:
+            _record_error(store, "reclassify", str(e) or type(e).__name__)
     for path, op in parsed:
-        if isinstance(op, RenameOp):
-            apply_rename(op, cfg, store)
-            path.unlink()
-            repo.commit(f"rename category {op.old} -> {op.new}")
-    current = cats_mod.parse((cfg.vault / "categories.md").read_text()) if (cfg.vault / "categories.md").exists() else []
-    try:
-        reclassify_removed(cfg, store, deps, current)
-    except AllProvidersLimited:
-        pass  # retried next run because last_categories was not updated
-    for path, op in parsed:
-        if not isinstance(op, SaveItem):
-            continue
-        state = process_save(op, cfg, store, deps, current)
-        tally[state] = tally.get(state, 0) + 1
-        if state in ("written", "merged"):
-            path.unlink()
-        elif state == "failed":
-            (cfg.inbox / "failed").mkdir(exist_ok=True)
-            path.rename(cfg.inbox / "failed" / path.name)
-        write_reports(cfg, store)
-        repo.commit(f"reelnote: {op.id} {state}")
+        try:
+            if isinstance(op, RenameOp):
+                apply_rename(op, cfg, store)
+                path.unlink()
+                repo.commit(f"rename category {op.old} -> {op.new}")
+                current = _read_categories(cfg) or []
+                continue
+            state = process_save(op, cfg, store, deps, current or [])
+            tally[state] = tally.get(state, 0) + 1
+            if state in ("written", "merged"):
+                path.unlink()
+            elif state == "failed":
+                (cfg.inbox / "failed").mkdir(exist_ok=True)
+                path.rename(cfg.inbox / "failed" / path.name)
+            write_reports(cfg, store)
+            repo.commit(f"reelnote: {op.id} {state}")
+        except Exception as e:  # one bad item must not block the rest of the inbox
+            tally["error"] = tally.get("error", 0) + 1
+            _handle_error(op, e, path, cfg, store)
     write_reports(cfg, store)
     repo.commit("reelnote: reports")
     repo.push()
