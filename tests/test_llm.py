@@ -1,7 +1,7 @@
 import json
 import subprocess
 import pytest
-from reelnote.llm import Chain, extract_json, BadOutput, AllProvidersLimited, NOTE_SCHEMA, CLASSIFY_SCHEMA
+from reelnote.llm import Chain, note_prompt, extract_json, BadOutput, AllProvidersLimited, NOTE_SCHEMA, CLASSIFY_SCHEMA
 from reelnote.store import Store
 
 NOTE = {"title": "맥북 생산성 앱 7개", "summary": "s", "key_facts": ["Raycast: 런처"], "keywords": ["mac"], "category": None}
@@ -74,7 +74,6 @@ def test_missing_cli_skipped(tmp_path):
         return cp(out=json.dumps({"category": "a"}))
     assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
 
-
 def test_not_logged_in_skipped_without_cooldown(tmp_path):
     store = Store(tmp_path / "db")
     calls = []
@@ -87,7 +86,6 @@ def test_not_logged_in_skipped_without_cooldown(tmp_path):
     assert calls == ["claude", "grok"]
     assert store.cooldown_until("claude") == 0.0
 
-
 def test_claude_command_uses_light_flags(tmp_path):
     seen = []
     def runner(cmd, **kw):
@@ -96,7 +94,8 @@ def test_claude_command_uses_light_flags(tmp_path):
     cmd = seen[0]
     assert "--tools" in cmd and "--setting-sources" in cmd and "--strict-mcp-config" in cmd
     assert cmd[cmd.index("--model") + 1] == "sonnet"
-
+    assert cmd[cmd.index("--tools") + 1] == "" and cmd[cmd.index("--setting-sources") + 1] == ""
+    assert "--disable-slash-commands" in cmd and "--no-session-persistence" in cmd
 
 def test_codex_command_skips_user_config(tmp_path):
     seen = []
@@ -106,3 +105,37 @@ def test_codex_command_skips_user_config(tmp_path):
         return cp()
     Chain(Store(tmp_path / "db"), ("codex",), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
     assert "--ephemeral" in seen[0] and "--ignore-user-config" in seen[0]
+    assert seen[0][seen[0].index("--sandbox") + 1] == "read-only"
+
+
+def test_grok_command_is_sandboxed(tmp_path):
+    seen = []
+    def runner(cmd, **kw):
+        seen.append(cmd); return cp(out=json.dumps({"category": "a"}))
+    Chain(Store(tmp_path / "db"), ("grok",), 60, runner=runner).run("p", CLASSIFY_SCHEMA)
+    cmd = seen[0]
+    assert cmd[cmd.index("--sandbox") + 1] == "strict"
+    assert "run_terminal_cmd" in cmd[cmd.index("--disallowed-tools") + 1]
+    assert cmd[cmd.index("--max-turns") + 1] == "1"
+
+
+def test_note_prompt_marks_sources_untrusted():
+    p = note_prompt(caption="c", transcript="t", screen_text="s", dm_texts=[], memos=[], categories=[], fixed_category=None)
+    assert "untrusted data" in p
+
+
+def test_valid_note_mentioning_login_is_accepted(tmp_path):
+    calls = []
+    note = {**NOTE, "title": "grok login 하는 법 (not logged in 해결)"}
+    def runner(cmd, **kw):
+        calls.append(cmd[0]); return cp(out=json.dumps({"structured_output": note}))
+    assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", NOTE_SCHEMA) == note
+    assert calls == ["claude"]
+
+
+def test_timeout_moves_to_next_provider(tmp_path):
+    def runner(cmd, **kw):
+        if cmd[0] == "claude":
+            raise subprocess.TimeoutExpired(cmd, 900)
+        return cp(out=json.dumps({"category": "a"}))
+    assert Chain(Store(tmp_path / "db"), ("claude", "grok"), 60, runner=runner).run("p", CLASSIFY_SCHEMA) == {"category": "a"}
