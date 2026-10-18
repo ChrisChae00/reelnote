@@ -1,0 +1,23 @@
+from pathlib import Path
+import pytest
+from reelnote.config import load
+
+def test_defaults_when_file_missing(tmp_path):
+    cfg = load(tmp_path / "missing.toml")
+    assert cfg.providers == ("claude", "codex", "grok")
+    assert cfg.max_attempts == 3
+    assert cfg.vault == cfg.data_repo / "vault"
+
+def test_file_overrides(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('data_repo = "/tmp/data"\nproviders = ["codex"]\nhub_threshold = 0.8\n')
+    cfg = load(p)
+    assert cfg.data_repo == Path("/tmp/data")
+    assert cfg.providers == ("codex",)
+    assert cfg.hub_threshold == 0.8
+
+def test_unknown_key_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('typo_key = 1\n')
+    with pytest.raises(TypeError):
+        load(p)
