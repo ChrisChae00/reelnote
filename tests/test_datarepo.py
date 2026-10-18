@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 import pytest
-from reelnote.datarepo import DataRepo
+from reelnote.datarepo import DataRepo, SyncError
 
 def git(cwd, *args):
     subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
@@ -49,3 +49,86 @@ def test_push_after_concurrent_phone_commit(remote_and_clones):
     assert (phone / "vault" / "note.md").read_text() == "n"
     assert (phone / "vault" / "categories.md").read_text() == "# c\nb\na\n"
     assert (mac / "inbox" / "new.json").exists()
+
+
+def _commit_push(c, msg):
+    git(c, "add", "-A"); git(c, "commit", "-qm", msg); git(c, "push", "-q", "origin", "main")
+
+
+def _out(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
+
+
+def _rebasing(c):
+    return (c / ".git" / "rebase-merge").exists() or (c / ".git" / "rebase-apply").exists()
+
+
+def _seed_note(mac, phone, name="note.md"):
+    (phone / "vault" / name).write_text("base\n")
+    _commit_push(phone, "base")
+    git(mac, "pull", "-q", "--rebase")
+
+
+def test_conflict_outside_categories_keeps_mac_commit(remote_and_clones):
+    mac, phone = remote_and_clones
+    _seed_note(mac, phone)
+    (phone / "vault" / "note.md").write_text("phone\n"); _commit_push(phone, "p")
+    (mac / "vault" / "note.md").write_text("mac\n")
+    repo = DataRepo(mac)
+    assert repo.commit("mac")
+    with pytest.raises(SyncError):
+        repo.push()
+    assert _out(mac, "show", "HEAD:vault/note.md") == "mac\n"
+    assert not _rebasing(mac)
+
+
+def test_dirty_tree_is_committed_not_stashed(remote_and_clones):
+    mac, phone = remote_and_clones
+    _seed_note(mac, phone, "a.md")
+    (phone / "vault" / "a.md").write_text("phone\n"); _commit_push(phone, "p")
+    (mac / "vault" / "a.md").write_text("mac-change\n")
+    try:
+        DataRepo(mac).pull()
+        assert "<<<<<<<" not in "".join(
+            (mac / f).read_text() for f in _out(mac, "ls-files").split())
+    except SyncError:
+        pass
+    assert "mac-change" in _out(mac, "log", "-p", "--all")
+    assert _out(mac, "stash", "list") == ""
+
+
+def test_push_failure_surfaces_stderr(remote_and_clones):
+    mac, _ = remote_and_clones
+    git(mac, "remote", "set-url", "origin", "/nonexistent")
+    (mac / "vault" / "x.md").write_text("x")
+    repo = DataRepo(mac)
+    repo.commit("x")
+    with pytest.raises(SyncError, match="push failed"):
+        repo.push()
+
+
+def test_multiple_local_commits_each_conflicting_on_categories(remote_and_clones):
+    mac, phone = remote_and_clones
+    repo = DataRepo(mac)
+    for i in (1, 2):
+        (mac / "vault" / "categories.md").write_text(f"# c\nmac{i}\n")
+        (mac / "vault" / f"n{i}.md").write_text(str(i))
+        assert repo.commit(f"m{i}")
+    (phone / "vault" / "categories.md").write_text("# c\nphone\n"); _commit_push(phone, "p")
+    repo.push()
+    git(phone, "pull", "-q", "--rebase")
+    assert (phone / "vault" / "n1.md").exists() and (phone / "vault" / "n2.md").exists()
+    assert (phone / "vault" / "categories.md").read_text() == "# c\nphone\n"
+
+
+def test_stale_rebase_is_recovered(remote_and_clones):
+    mac, phone = remote_and_clones
+    _seed_note(mac, phone)
+    (phone / "vault" / "note.md").write_text("phone\n"); _commit_push(phone, "p")
+    (mac / "vault" / "note.md").write_text("mac\n")
+    git(mac, "commit", "-qam", "mac")
+    subprocess.run(["git", "-C", str(mac), "pull", "--rebase", "-q"], capture_output=True)
+    assert _rebasing(mac)
+    with pytest.raises(SyncError):
+        DataRepo(mac).pull()
+    assert not _rebasing(mac)
