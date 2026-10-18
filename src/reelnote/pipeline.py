@@ -86,7 +86,7 @@ def _merge_into_written(item: SaveItem, path: Path, cfg: Config, store: Store, d
         fm, _ = vault.read_note(path)
         try:
             text = deps.page_text(item.dm_url)
-            vault.append_to_section(path, "DM info", f"### {item.dm_url}\n\n{text}")
+            vault.append_to_section(path, "DM info", f"### {vault._inert(item.dm_url)}\n\n{vault._inert(text)}")
             changes = {}
         except extract.PageUnavailable as e:
             store.update(rec.code, data={"dm_errors": rec.data.get("dm_errors", []) + [[item.dm_url, str(e)]]})
@@ -380,6 +380,7 @@ def run_once(cfg: Config, store: Store, deps: Deps, repo: DataRepo) -> dict[str,
             failed_dir.mkdir(exist_ok=True)
             path.rename(failed_dir / path.name)
             (failed_dir / f"{path.stem}.error.txt").write_text(str(e))
+            _record_error(store, path.stem, str(e))
             tally["invalid"] = tally.get("invalid", 0) + 1
     renames: dict[str, str] = {}  # old -> final new name, chained across ops
     for path, op in [(p, o) for p, o in parsed if isinstance(o, RenameOp)]:

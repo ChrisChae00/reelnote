@@ -44,3 +44,9 @@ def test_rename_same_name_invalid(tmp_path):
 
 def test_blank_memo_becomes_none(tmp_path):
     assert parse_item(write(tmp_path, {**GOOD, "memo": "   "})).memo is None
+
+
+@pytest.mark.parametrize("created_at", ["../../../escape", "yesterday", 5])
+def test_created_at_must_be_iso(tmp_path, created_at):
+    with pytest.raises(InvalidInboxItem):
+        parse_item(write(tmp_path, {**GOOD, "created_at": created_at}))

@@ -4,7 +4,7 @@ A personal organizer for the information buried in Instagram Reels and Shorts.
 
 Saving a Reel in Instagram is easy. Finding it again later is not, and after a few hundred saves you forget what you kept. reelnote takes the video link (and the extra-info link the creator sent by DM) from your phone in one step. Your Mac then reads the video itself and files it as an Obsidian note, grouped with similar notes.
 
-> **Status:** design phase. There is no runnable code yet.
+> **Status:** Mac pipeline works; phone share UI not built yet.
 
 ## How it works
 
@@ -55,3 +55,38 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.reelnote.run.plist
 ```
 
 Every tool must print a path; launchd runs with this PATH. Log in to `claude` and `codex` once in a terminal before enabling launchd. `uv run reelnote status` shows item states and which AI providers are cooling down. `uv run reelnote regroup` groups unassigned notes into new hubs.
+
+Ollama must be running whenever the pipeline runs, including right after login: open the Ollama app or run `brew services start ollama`. If Ollama, `yt-dlp`, `ffmpeg`, `whisper-cli` or both AI CLIs are missing, the run stops early without counting a failed attempt and `vault/review.md` names the missing tool.
+
+To stop the scheduled runs:
+
+```bash
+launchctl bootout gui/$(id -u)/com.reelnote.run
+```
+
+## Retrying a failed item
+
+An item that failed 3 times moves to `inbox/failed/<id>.json` (invalid items also get `<id>.error.txt`). To retry it, move the JSON back:
+
+```bash
+cd ~/reelnote-data
+git mv inbox/failed/<id>.json inbox/ && git commit -m "retry <id>" && git push
+```
+
+## Recovering from a sync conflict
+
+reelnote resolves conflicts in `vault/categories.md` by itself (the phone's version wins). A conflict in any other file stops the run, prints `reelnote: sync failed: pull conflict in [...]`, and shows a macOS notification. Every later run fails the same way until you fix it. reelnote aborts its own rebase before it stops, so start the pull again by hand and resolve it there:
+
+```bash
+cd ~/reelnote-data
+git pull --rebase                  # stops at the conflict
+git status                         # lists the conflicted files
+# edit each file to resolve it, or pick one side:
+git checkout --theirs <file>       # keep the Mac's version (in a rebase "theirs" is the local commit)
+git checkout --ours <file>         # keep the remote (phone) version
+git add <file>
+git rebase --continue              # repeat checkout/add/continue if more commits conflict
+git push
+# or, to back out and leave everything as it was:
+git rebase --abort
+```

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -68,5 +69,10 @@ def parse_item(path: Path) -> SaveItem | RenameOp:
     dm_url = _opt_str(d, "dm_url")
     if dm_url and urlparse(dm_url).scheme not in ("http", "https"):
         raise InvalidInboxItem(f"dm_url must be http(s): {dm_url}")
+    created_at = _req_str(d, "created_at")
+    try:
+        datetime.fromisoformat(created_at)  # it becomes part of the note filename
+    except ValueError as e:
+        raise InvalidInboxItem(f"created_at must be an ISO 8601 date: {created_at}") from e
     return SaveItem(id=path.stem, video_url=video_url, dm_url=dm_url, memo=_opt_str(d, "memo"),
-                    category=_req_str(d, "category"), created_at=_req_str(d, "created_at"))
+                    category=_req_str(d, "category"), created_at=created_at)

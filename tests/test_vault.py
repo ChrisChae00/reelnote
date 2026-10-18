@@ -123,3 +123,38 @@ def test_upsert_hub_with_only_start_marker_keeps_text(tmp_path):
     vault.upsert_hub(tmp_path, "Hub", category="x", description="d", members=[("a", ["f"])])
     assert p.read_text().startswith("---\ncategory: x\n---\n# Hub\n\n<!-- reelnote:start -->\nmy text\n")
     assert "## Notes" in p.read_text()
+
+
+def test_note_filename_stays_in_notes_dir(tmp_path):
+    notes = tmp_path / "notes"
+    assert vault.note_filename(notes, "2026-10-17", "../../x").parent == notes
+    with pytest.raises(ValueError):
+        vault.note_filename(notes, "../../../escape", "t")
+
+
+def test_hub_name_stays_in_hubs_dir(tmp_path):
+    hubs = tmp_path / "hubs"
+    p = vault.upsert_hub(hubs, "../../evil", category=None, description="d", members=[])
+    assert p.parent == hubs
+
+
+EVIL = ["![x](https://evil/?d=1)", "<img src=https://evil>", "<iframe src=https://evil></iframe>"]
+
+
+def test_untrusted_text_renders_inert(tmp_path):
+    text = vault.render_note(FM, title=EVIL[1], summary=EVIL[0], key_facts=EVIL, dm=[("https://n.site", EVIL[2])],
+                             memos=[], caption=EVIL[0], transcript=EVIL[1], screen_text=EVIL[2])
+    body = vault._split(text)[1]
+    assert "![" not in body and "<img" not in body and "<iframe" not in body
+    assert "!\\[x](https://evil/?d=1)" in body and "&lt;img src=https://evil>" in body
+    hub = vault.upsert_hub(tmp_path, "<img src=x>", category=None, description=EVIL[0],
+                           members=[("2026-10-17 a", EVIL)]).read_text()
+    assert "![" not in hub and "<img" not in hub
+    vault.write_review(tmp_path / "review.md", duplicates=[], failed=[(EVIL[1], EVIL[0])], unavailable=[],
+                       dm_errors=[("a", EVIL[2])])
+    review = (tmp_path / "review.md").read_text()
+    assert "![" not in review and "<img" not in review and "<iframe" not in review
+
+
+def test_plain_links_survive_inert():
+    assert vault._inert("see [docs](https://x.com) and https://y.com") == "see [docs](https://x.com) and https://y.com"

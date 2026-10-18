@@ -1,5 +1,7 @@
 import argparse
 import fcntl
+import shutil
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -24,6 +26,18 @@ def run_lock(state_dir: Path):
             yield True
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def notify(message: str) -> None:
+    """Best-effort macOS banner: launchd runs are otherwise silent."""
+    if not shutil.which("osascript"):
+        return
+    try:  # message goes in as argv, never spliced into the script
+        subprocess.run(["osascript", "-e", "on run argv", "-e",
+                        'display notification (item 1 of argv) with title "reelnote"', "-e", "end run", message],
+                       capture_output=True, timeout=10)
+    except Exception:
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo.push()
         except SyncError as e:
             print(f"reelnote: sync failed: {e}", file=sys.stderr)
+            notify(f"sync failed: {e}")
             return 1
     return 0
 

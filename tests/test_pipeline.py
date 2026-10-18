@@ -410,3 +410,20 @@ def test_ollama_down_stops_run_without_attempts(tmp_path):
     assert any("Connection refused" in e for _, e in store.get_meta("run_errors"))
     assert "Connection refused" in (cfg.vault / "review.md").read_text()
     assert _git(remote, "log", "-1", "--format=%s") == "reelnote: reports\n"
+
+
+def test_invalid_inbox_item_shows_in_review(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path)
+    (cfg.inbox / "001.json").write_text("{not json")
+    pipeline.run_once(cfg, store, deps, repo)
+    assert (cfg.inbox / "failed" / "001.json").exists()
+    review = (cfg.vault / "review.md").read_text()
+    assert "- 001: not valid JSON" in review
+
+
+def test_merged_dm_text_is_inert(tmp_path):
+    cfg, store, deps = make(tmp_path, page=lambda url: "<img src=https://evil> ![x](https://evil)")
+    pipeline.process_save(item(), cfg, store, deps, [])
+    pipeline.process_save(item(id="i2", dm="https://n.site/y"), cfg, store, deps, [])
+    body = vault.read_note(only_note(cfg))[1]
+    assert "&lt;img" in body and "<img" not in body and "![" not in body
