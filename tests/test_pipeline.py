@@ -464,3 +464,30 @@ def test_handle_error_tolerates_moved_inbox_file(tmp_path):
         store.fail_attempt("C8xYz2Qp", "x", cfg.max_attempts)
     pipeline._handle_error(op, RuntimeError("boom"), cfg.inbox / "gone.json", cfg, store)
     assert store.get("C8xYz2Qp").state == "failed"
+
+
+def test_apply_rename_rewrites_only_matching_pending_saves(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    put_inbox(cfg, "002.json", video_url="https://www.instagram.com/reel/A2/", category="Z")
+    (cfg.inbox / "003.json").write_text("{broken")
+    (cfg.inbox / "failed").mkdir(exist_ok=True)
+    put_inbox(cfg, "failed/004.json", video_url="https://www.instagram.com/reel/A4/", category="X")
+    before = {n: (cfg.inbox / n).read_text() for n in ("002.json", "003.json", "failed/004.json")}
+    pipeline.apply_rename(RenameOp(id="r", old="X", new="Y"), cfg, store)
+    assert json.loads((cfg.inbox / "001.json").read_text())["category"] == "Y"
+    assert {n: (cfg.inbox / n).read_text() for n in before} == before
+
+
+def test_rename_survives_stalled_save_across_runs(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    deps = replace(deps, llm=FakeLLM(limited=True))
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    pipeline.run_once(cfg, store, deps, repo)
+    (cfg.vault / "categories.md").write_text("# c\nY\n")
+    (cfg.inbox / "002.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
+    _git(cfg.data_repo, "add", "-A"); _git(cfg.data_repo, "commit", "-qm", "phone")
+    pipeline.run_once(cfg, store, deps, repo)
+    pipeline.run_once(cfg, store, replace(deps, llm=FakeLLM()), repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "Y" and fm["category_source"] == "manual"

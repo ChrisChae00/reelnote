@@ -78,6 +78,7 @@ git mv inbox/failed/<id>.json inbox/ && git commit -m "retry <id>" && git push
 reelnote resolves conflicts in `vault/categories.md` by itself (the phone's version wins). A conflict in any other file stops the run, prints `reelnote: sync failed: pull conflict in [...]`, and shows a macOS notification. Every later run fails the same way until you fix it. reelnote aborts its own rebase before it stops, so start the pull again by hand and resolve it there:
 
 ```bash
+launchctl bootout gui/$(id -u)/com.reelnote.run   # stop scheduled runs, otherwise a run aborts your rebase
 cd ~/reelnote-data
 git pull --rebase                  # stops at the conflict
 git status                         # lists the conflicted files
@@ -89,4 +90,6 @@ git rebase --continue              # repeat checkout/add/continue if more commit
 git push
 # or, to back out and leave everything as it was:
 git rebase --abort
+# last step: resume scheduled runs
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.reelnote.run.plist
 ```
