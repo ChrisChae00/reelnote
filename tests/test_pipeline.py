@@ -488,6 +488,23 @@ def test_rename_survives_stalled_save_across_runs(tmp_path):
     (cfg.inbox / "002.json").write_text(json.dumps({"op": "rename_category", "from": "X", "to": "Y"}))
     _git(cfg.data_repo, "add", "-A"); _git(cfg.data_repo, "commit", "-qm", "phone")
     pipeline.run_once(cfg, store, deps, repo)
+    assert json.loads((cfg.inbox / "001.json").read_text())["category"] == "Y"
     pipeline.run_once(cfg, store, replace(deps, llm=FakeLLM()), repo)
     fm, _ = vault.read_note(only_note(cfg))
     assert fm["category"] == "Y" and fm["category_source"] == "manual"
+
+
+def test_chained_rename_rewrites_pending_save(tmp_path):
+    cfg, store, deps, repo, _ = make_repo(tmp_path, categories="# c\nX\n")
+    deps = replace(deps, llm=FakeLLM(limited=True))
+    put_inbox(cfg, "001.json", video_url="https://www.instagram.com/reel/A1/", category="X")
+    pipeline.run_once(cfg, store, deps, repo)
+    (cfg.vault / "categories.md").write_text("# c\nZ\n")
+    for n, a, b in (("002.json", "X", "Y"), ("003.json", "Y", "Z")):
+        (cfg.inbox / n).write_text(json.dumps({"op": "rename_category", "from": a, "to": b}))
+    _git(cfg.data_repo, "add", "-A"); _git(cfg.data_repo, "commit", "-qm", "phone")
+    pipeline.run_once(cfg, store, deps, repo)
+    assert json.loads((cfg.inbox / "001.json").read_text())["category"] == "Z"
+    pipeline.run_once(cfg, store, replace(deps, llm=FakeLLM()), repo)
+    fm, _ = vault.read_note(only_note(cfg))
+    assert fm["category"] == "Z" and fm["category_source"] == "manual"

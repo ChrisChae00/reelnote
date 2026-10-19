@@ -99,6 +99,10 @@ def render_note(fm: dict, *, title: str, summary: str, key_facts: list[str], dm:
     return _dump(fm) + body
 
 
+def atomic_write(path: Path, text: str) -> None:
+    _atomic_write(path, text)
+
+
 def write_new_note(path: Path, text: str) -> None:
     _atomic_write(path, text)
 

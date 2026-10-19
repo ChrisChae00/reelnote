@@ -306,12 +306,12 @@ def apply_rename(op: RenameOp, cfg: Config, store: Store) -> None:
             store.update(rec.code, data={"category": op.new})
     for path in sorted(cfg.inbox.glob("*.json")):  # stalled saves must not resurrect the old name next run
         try:
-            d = json.loads(path.read_text())
+            d = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if isinstance(d, dict) and d.get("op") == "save" and d.get("category") == op.old:
             d["category"] = op.new
-            path.write_text(json.dumps(d, ensure_ascii=False))
+            vault.atomic_write(path, json.dumps(d, ensure_ascii=False))
     cat_file = cfg.vault / "categories.md"
     if cat_file.exists():
         cat_file.write_text(cats_mod.apply_rename(cat_file.read_text(), op.old, op.new))
