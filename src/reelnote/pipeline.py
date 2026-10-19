@@ -314,7 +314,7 @@ def apply_rename(op: RenameOp, cfg: Config, store: Store) -> None:
             vault.atomic_write(path, json.dumps(d, ensure_ascii=False))
     cat_file = cfg.vault / "categories.md"
     if cat_file.exists():
-        cat_file.write_text(cats_mod.apply_rename(cat_file.read_text(), op.old, op.new))
+        vault.atomic_write(cat_file, cats_mod.apply_rename(cat_file.read_text(encoding="utf-8"), op.old, op.new))
     renamed: list[str] = []
     for c in store.get_meta("last_categories", []):
         c = op.new if c == op.old else c
@@ -375,7 +375,7 @@ def write_reports(cfg: Config, store: Store) -> None:
 
 def _read_categories(cfg: Config) -> list[str] | None:
     f = cfg.vault / "categories.md"
-    return cats_mod.parse(f.read_text()) if f.exists() else None
+    return cats_mod.parse(f.read_text(encoding="utf-8")) if f.exists() else None
 
 
 def _record_error(store: Store, inbox_id: str, error: str) -> None:

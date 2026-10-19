@@ -508,3 +508,11 @@ def test_chained_rename_rewrites_pending_save(tmp_path):
     pipeline.run_once(cfg, store, replace(deps, llm=FakeLLM()), repo)
     fm, _ = vault.read_note(only_note(cfg))
     assert fm["category"] == "Z" and fm["category_source"] == "manual"
+
+
+def test_apply_rename_writes_categories_md_atomic_utf8(tmp_path):
+    cfg, store, deps = make(tmp_path)
+    (cfg.vault / "categories.md").write_bytes("# c\n생산성\n".encode("utf-8"))
+    pipeline.apply_rename(RenameOp(id="r1", old="생산성", new="업무툴"), cfg, store)
+    assert "업무툴" in (cfg.vault / "categories.md").read_bytes().decode("utf-8")
+    assert not list(cfg.vault.glob(".categories.md.*.tmp"))
