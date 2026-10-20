@@ -7,6 +7,7 @@
 // v3: v2 was still blank, so bisect: A plain page, B spike page without callback, C with callback.
 // v4: A and B rendered, C (evaluateJavaScript callback) stayed blank. Try two other handoffs:
 //     D polls window.result, E catches a reelnote-done: navigation. F checks Script.complete() closes the sheet.
+// v5: prototype showed mojibake and only its notes column; add charset and viewport, hide the notes.
 // Run once inside the Scriptable app (stores the token), then from Instagram: Share > Scriptable.
 
 const REPO = "ChrisChae00/reelnote-data"
@@ -16,7 +17,7 @@ const log = []
 const t0 = Date.now()
 const note = (k, v) => log.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
 
-note("version", "v4")
+note("version", "v5")
 note("in share sheet", config.runsInActionExtension)
 note("args.urls", args.urls)
 note("args.plainTexts", args.plainTexts)
@@ -149,10 +150,9 @@ a.addAction("Open")
 a.addCancelAction("Skip")
 if ((await a.present()) === 0) {
   const proto = new WebView()
-  const fm = FileManager.local()
-  const file = fm.joinPath(fm.temporaryDirectory(), "share-sheet.html")
-  fm.writeString(file, await new Request(PROTO).loadString())
-  await proto.loadFile(file)
+  // the prototype file is an artifact fragment: no charset (Korean turned to mojibake) and no viewport
+  const head = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>.intro{display:none}</style>`
+  await proto.loadHTML(head + (await new Request(PROTO).loadString()))
   await proto.present(true)
 }
 
