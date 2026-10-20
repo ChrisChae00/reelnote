@@ -5,6 +5,8 @@
 // 4. Is the full prototype smooth inside the share extension (memory limit)?
 // v2: no "#" in the spike page (first run showed a blank WebView), final log in an Alert.
 // v3: v2 was still blank, so bisect: A plain page, B spike page without callback, C with callback.
+// v4: A and B rendered, C (evaluateJavaScript callback) stayed blank. Try two other handoffs:
+//     D polls window.result, E catches a reelnote-done: navigation. F checks Script.complete() closes the sheet.
 // Run once inside the Scriptable app (stores the token), then from Instagram: Share > Scriptable.
 
 const REPO = "ChrisChae00/reelnote-data"
@@ -14,7 +16,7 @@ const log = []
 const t0 = Date.now()
 const note = (k, v) => log.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
 
-note("version", "v3")
+note("version", "v4")
 note("in share sheet", config.runsInActionExtension)
 note("args.urls", args.urls)
 note("args.plainTexts", args.plainTexts)
@@ -93,26 +95,46 @@ async function seen(step) {
   note(`step ${step} visible`, (await q.present()) === 0)
 }
 
-const a1 = new WebView()
-await a1.loadHTML("<h1 style='font-size:40px'>Step A: plain page</h1>")
-await a1.present(true)
-await seen("A")
+const sleep = ms => new Promise(r => Timer.schedule(ms, false, r))
+const sentBanner = `document.body.insertAdjacentHTML("afterbegin", "<h2>Sent. Close this sheet.</h2>")`
+const withSend = js => html.replace("<style>", `<script>window.done = v => { ${js}; ${sentBanner} }</script><style>`)
 
-const b1 = new WebView()
-await b1.loadHTML(html)
-await b1.present(true)
-await seen("B")
+// D: the page keeps the result, Scriptable polls for it
+async function viaPoll(onResult) {
+  const w = new WebView()
+  await w.loadHTML(withSend("window.result = v"))
+  let open = true
+  const closed = w.present(true).then(() => { open = false })
+  let got = null
+  while (open && !got) {
+    await sleep(300)
+    got = await w.evaluateJavaScript("window.result || null").catch(() => null)
+  }
+  if (got && onResult) onResult(got)
+  await closed
+  return got
+}
 
-const wv = new WebView()
-await wv.loadHTML(html)
-const closed = wv.present(true).then(() => "closed without choosing")
-const picked = await Promise.race([wv.evaluateJavaScript("window.done = completion; null", true), closed])
-note("result from JS", picked)
+// E: the page navigates to a fake URL that Scriptable intercepts
+async function viaUrl() {
+  const w = new WebView()
+  let got = null
+  w.shouldAllowRequest = req => {
+    if (!req.url.startsWith("reelnote-done:")) return true
+    got = JSON.parse(decodeURIComponent(req.url.split("?")[1]))
+    return false
+  }
+  await w.loadHTML(withSend(`location.href = "reelnote-done://x?" + encodeURIComponent(JSON.stringify(v))`))
+  await w.present(true)
+  return got
+}
+
+note("D result (poll)", await viaPoll())
+await seen("D")
+note("E result (url)", await viaUrl())
+await seen("E")
 note("total ms", Date.now() - t0)
 Pasteboard.copy(log.join("\n"))
-await wv.evaluateJavaScript(`show(${JSON.stringify(log.join("\n") + "\n\n(copied to clipboard)")})`).catch(() => {})
-await closed
-await seen("C")
 
 const r = new Alert()
 r.title = "Spike log (also in clipboard)"
@@ -133,4 +155,7 @@ if ((await a.present()) === 0) {
   await proto.loadFile(file)
   await proto.present(true)
 }
+
+// F (share sheet only): tap a category; the whole share sheet should close by itself
+if (config.runsInActionExtension) await viaPoll(() => Script.complete())
 Script.complete()
