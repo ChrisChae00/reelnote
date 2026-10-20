@@ -8,11 +8,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from reelnote import pipeline
 from reelnote.config import load
-from reelnote.datarepo import DataRepo, SyncError
-from reelnote.llm import AllProvidersLimited
+from reelnote.datarepo import OFFLINE, DataRepo, SyncError
 from reelnote.store import Store
+
+FULL_RUN_EVERY = 900  # seconds; items left in the inbox (AI limit, failed download) are retried this often
 
 
 @contextmanager
@@ -64,10 +64,24 @@ def main(argv: list[str] | None = None) -> int:
             print("another reelnote run is in progress", file=sys.stderr)
             return 0
         repo = DataRepo(cfg.data_repo)
+        if args.command == "run":
+            # launchd starts this every minute: a cheap ls-remote decides whether the full run is needed
+            head = repo.remote_head()
+            if head is None:
+                return 0  # offline: stay quiet, the next minute tries again
+            # "" = ls-remote failed some other way: run every FULL_RUN_EVERY so the run reports it, not every minute
+            if head in ("", store.get_meta("seen_head")) and time.time() - store.get_meta("last_full_run", 0) < FULL_RUN_EVERY:
+                return 0
+            if head:
+                store.set_meta("seen_head", head)
+            store.set_meta("last_full_run", time.time())
+        from reelnote import pipeline  # heavy imports (~0.7 s CPU), only when there is work
+        from reelnote.llm import AllProvidersLimited
         deps = pipeline.Deps.real(cfg, store)
         try:
             if args.command == "run":
                 print(pipeline.run_once(cfg, store, deps, repo))
+                store.set_meta("seen_head", repo.local_head())  # our own push is not new work
             else:
                 repo.pull()
                 print(f"new hubs: {pipeline.regroup(cfg, store, deps)}")
@@ -76,7 +90,8 @@ def main(argv: list[str] | None = None) -> int:
                 repo.push()
         except SyncError as e:
             print(f"reelnote: sync failed: {e}", file=sys.stderr)
-            notify(f"sync failed: {e}")
+            if not OFFLINE.search(str(e)):  # Wi-Fi dropped mid-run: the next run retries
+                notify(f"sync failed: {e}")
             return 1
         except AllProvidersLimited as e:  # only regroup lets this escape; run_once handles it per item
             print(f"reelnote: no AI provider available: {e}", file=sys.stderr)

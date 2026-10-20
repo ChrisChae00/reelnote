@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>reelnote</title>
+<style>
+/* the real share UI; docs/prototype/share-sheet.html is the design reference it grew from */
+:root {
+  --ink: #1c1c1e; --ink-2: #6b7178; --screen-bg: #f2f2f7; --cell: #ffffff;
+  --sep: rgba(60,60,67,0.18); --tint: #0b6e8a; --tint-soft: rgba(11,110,138,0.12); --danger: #d70015;
+  --material: rgba(246,246,249,0.74); --scrim: rgba(0,0,0,0.32); --shadow: rgba(16,24,32,0.18);
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --top: env(safe-area-inset-top, 0px); --bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) { :root {
+  --ink: #f2f2f7; --ink-2: #98989f; --screen-bg: #000000; --cell: #1c1c1e;
+  --sep: rgba(84,84,88,0.6); --tint: #4cc2db; --tint-soft: rgba(76,194,219,0.16); --danger: #ff453a;
+  --material: rgba(30,30,32,0.72); --scrim: rgba(0,0,0,0.55); --shadow: rgba(0,0,0,0.6); color-scheme: dark } }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--screen-bg); }
+body { color: var(--ink); font: 400 1rem/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 3px solid var(--tint); outline-offset: 2px; }
+
+.screen { position: fixed; inset: 0; overflow: hidden; background: #000; isolation: isolate; }
+.layer { position: absolute; inset: 0; background: var(--screen-bg); overflow: hidden; will-change: transform; transform-origin: 50% 0; }
+#save { box-shadow: -12px 0 30px -18px var(--shadow); }
+.shade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+
+/* nav bar: translucent material, visible only once content scrolls under it */
+.navbar { position: absolute; top: 0; left: 0; right: 0; z-index: 2; height: calc(52px + var(--top)); padding: var(--top) 16px 0; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; transition: background-color 180ms ease, backdrop-filter 180ms ease; }
+.navbar.scrolled { background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
+.inline-title { grid-column: 2; font-weight: 600; font-size: 1.0625rem; letter-spacing: -0.012em; opacity: 0; transition: opacity 160ms ease; white-space: nowrap; }
+.navbar.scrolled .inline-title, .navbar.always .inline-title { opacity: 1; }
+.nav-btn { grid-column: 3; justify-self: end; background: none; border: 0; color: var(--tint); font-size: 1.0625rem; padding: 8px 0 8px 12px; display: inline-flex; align-items: center; gap: 4px; transition: opacity 100ms ease-out; }
+.nav-btn.back { grid-column: 1; justify-self: start; padding: 8px 12px 8px 0; }
+.nav-btn:active { opacity: 0.4; transition: none; }
+.nav-btn svg { width: 20px; height: 20px; }
+.scroller { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; padding: calc(52px + var(--top)) 0 40px; -webkit-overflow-scrolling: touch; }
+#save .scroller { padding-bottom: calc(120px + var(--bottom)); }
+.large-title { margin: 4px 20px 2px; font-size: 2.125rem; line-height: 1.12; letter-spacing: -0.024em; font-weight: 700; }
+.lede { margin: 0 20px 18px; color: var(--ink-2); font-size: 0.9375rem; letter-spacing: -0.005em; }
+.group-label { margin: 22px 32px 6px; font-size: 0.8125rem; color: var(--ink-2); letter-spacing: 0.005em; }
+.group { list-style: none; margin: 0 16px; padding: 0; background: var(--cell); border-radius: 12px; overflow: hidden; }
+.empty { margin: 0 32px; font-size: 0.9375rem; color: var(--ink-2); }
+
+.row { position: relative; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px 0 16px; background: var(--cell); }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--sep); }
+.row-main { flex: 1; min-width: 0; display: grid; gap: 1px; padding: 10px 0; background: none; border: 0; text-align: left; }
+.row:has(.row-main:active) { background: var(--sep); transition: none; }
+.row { transition: background-color 220ms ease-out; }
+.row-name { font-size: 1.0625rem; letter-spacing: -0.012em; overflow-wrap: anywhere; }
+.row-meta { font-size: 0.8125rem; color: var(--ink-2); }
+.row.auto .row-name { color: var(--tint); font-weight: 600; }
+.row.fresh { background: var(--tint-soft); }
+.edit-btn { flex: none; border: 0; background: var(--tint-soft); color: var(--tint); font-size: 0.875rem; font-weight: 600; padding: 5px 12px; border-radius: 999px; transition: transform 100ms ease-out, opacity 100ms ease-out; }
+.edit-btn:active { transform: scale(0.94); opacity: 0.7; transition: none; }
+.chev { flex: none; width: 8px; height: 13px; color: var(--ink-2); opacity: 0.6; }
+
+.banner { position: absolute; z-index: 3; left: 50%; top: calc(60px + var(--top)); translate: -50% 0; max-width: calc(100% - 32px); padding: 9px 16px; border-radius: 999px; background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.01em; text-align: center; box-shadow: 0 8px 24px -10px var(--shadow); opacity: 0; transition: opacity 220ms ease; pointer-events: none; }
+.banner.show { opacity: 1; }
+
+/* save screen */
+.chip-row { margin: 10px 20px 18px; display: flex; align-items: center; gap: 8px; font-size: 0.9375rem; color: var(--ink-2); }
+.chip { background: var(--tint-soft); color: var(--tint); font-weight: 600; padding: 3px 12px; border-radius: 999px; }
+.form { display: grid; gap: 6px; }
+.field { display: grid; gap: 2px; padding: 10px 16px; position: relative; }
+.field + .field::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--sep); }
+.field label { font-size: 0.8125rem; color: var(--ink-2); }
+.field label em { font-style: normal; opacity: 0.75; }
+.field input, .field textarea { border: 0; background: none; padding: 2px 0; font-size: 1rem; letter-spacing: -0.008em; width: 100%; min-width: 0; resize: none; }
+.field input:focus, .field textarea:focus { outline: none; }
+.field:focus-within { box-shadow: inset 3px 0 0 var(--tint); }
+.err { margin: 6px 32px 0; font-size: 0.8125rem; color: var(--danger); min-height: 1.2em; }
+.bottom-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + var(--bottom)); background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
+.primary { width: 100%; border: 0; border-radius: 14px; padding: 14px; background: var(--tint); color: #fff; font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.012em; display: inline-flex; justify-content: center; align-items: center; gap: 6px; transition: transform 100ms ease-out, opacity 100ms ease-out, background-color 200ms ease; }
+.primary:active { transform: scale(0.97); transition: none; }
+.primary:disabled { opacity: 0.4; cursor: default; transform: none; }
+.primary.busy:disabled { opacity: 0.7; }
+.primary.done { background: #248a3d; }
+.primary svg { width: 18px; height: 18px; }
+
+/* sheet */
+.scrim { position: absolute; inset: 0; z-index: 10; background: var(--scrim); opacity: 0; pointer-events: none; }
+.scrim.open { pointer-events: auto; }
+.sheet { position: absolute; z-index: 11; left: 0; right: 0; bottom: 0; background: var(--screen-bg); border-radius: 16px 16px 0 0; padding: 0 0 calc(16px + var(--bottom)); visibility: hidden; will-change: transform; box-shadow: 0 -10px 40px -20px var(--shadow); }
+.grab { padding: 8px 16px 6px; touch-action: none; cursor: grab; user-select: none; }
+.grab:active { cursor: grabbing; }
+.handle { width: 36px; height: 5px; border-radius: 3px; background: var(--sep); margin: 0 auto 12px; }
+.sheet-head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.sheet-head h2 { grid-column: 2; margin: 0; font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.012em; }
+.sheet-head .nav-btn { grid-column: 1; justify-self: start; padding-left: 0; }
+.sheet-body { display: grid; gap: 10px; padding-top: 10px; }
+.sheet .primary { margin: 6px 16px 0; width: auto; }
+.text-btn { border: 0; background: none; padding: 12px; font-size: 1.0625rem; color: var(--danger); transition: opacity 100ms ease-out; }
+.text-btn:active { opacity: 0.4; transition: none; }
+.confirm { margin: 0 16px; padding: 14px 16px; border-radius: 12px; background: var(--cell); display: grid; gap: 10px; }
+.confirm p { margin: 0; font-size: 0.9375rem; }
+.confirm .actions { display: flex; gap: 8px; }
+.confirm button { flex: 1; border: 0; border-radius: 10px; padding: 10px; font-weight: 600; }
+.confirm button:disabled { opacity: 0.5; }
+.confirm .del { background: var(--danger); color: #fff; }
+.confirm .keep { background: var(--sep); }
+
+@media (prefers-reduced-motion: reduce) {
+  .layer, .sheet { transition: opacity 200ms ease; }
+  .scrim { transition: opacity 200ms ease; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .navbar.scrolled, .bottom-bar, .banner { background: var(--screen-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+</style>
+</head>
+<body>
+<div class="screen" id="screen">
+  <div class="layer" id="home">
+    <header class="navbar" id="homeNav">
+      <span class="inline-title">카테고리</span>
+      <button class="nav-btn" id="newBtn" type="button" aria-label="새 카테고리">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg>새 카테고리
+      </button>
+    </header>
+    <div class="scroller" id="homeScroll">
+      <h1 class="large-title">카테고리</h1>
+      <p class="lede">공유한 링크를 넣을 곳을 고르세요.</p>
+      <ul class="group">
+        <li class="row auto"><button class="row-main" type="button" data-pick="auto"><span class="row-name">자동 분류</span><span class="row-meta">AI가 내용을 보고 골라요</span></button>
+          <svg class="chev" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5"/></svg></li>
+      </ul>
+      <div class="group-label">최근에 쓴 순서</div>
+      <ul class="group" id="catList"></ul>
+      <p class="empty" id="catEmpty" hidden>아직 카테고리가 없어요. 오른쪽 위에서 만들 수 있어요.</p>
+    </div>
+    <div class="banner" id="banner" role="status" aria-live="polite"></div>
+    <div class="shade" id="homeShade"></div>
+  </div>
+
+  <div class="layer" id="save" aria-hidden="true">
+    <header class="navbar always scrolled">
+      <button class="nav-btn back" id="backBtn" type="button">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 4 6.5 10l6 6"/></svg>카테고리
+      </button>
+      <span class="inline-title">링크 저장</span>
+    </header>
+    <div class="scroller">
+      <div class="chip-row">저장할 곳 <span class="chip" id="chosen"></span></div>
+      <form class="form" id="saveForm" novalidate>
+        <div class="group">
+          <div class="field"><label for="videoUrl">영상 링크</label><input id="videoUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://www.instagram.com/reel/…"></div>
+          <div class="field"><label for="dmUrl">DM으로 받은 링크 <em>선택</em></label><input id="dmUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://"></div>
+          <div class="field"><label for="memo">메모 <em>선택</em></label><textarea id="memo" rows="3" placeholder="왜 저장했는지 적어두면 나중에 찾기 쉬워요"></textarea></div>
+        </div>
+        <p class="err" id="saveErr" aria-live="polite"></p>
+      </form>
+    </div>
+    <div class="bottom-bar"><button class="primary" id="saveBtn" type="submit" form="saveForm">저장</button></div>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="grab" id="grab">
+      <div class="handle"></div>
+      <div class="sheet-head"><button class="nav-btn" id="sheetCancel" type="button">취소</button><h2 id="sheetTitle">카테고리 편집</h2></div>
+    </div>
+    <div class="sheet-body">
+      <div class="group"><div class="field"><label for="catName">이름</label><input id="catName" type="text" autocomplete="off" maxlength="30"></div></div>
+      <p class="err" id="nameErr" aria-live="polite"></p>
+      <button class="primary" id="sheetPrimary" type="button">이름 저장</button>
+      <button class="text-btn" id="deleteBtn" type="button">카테고리 삭제</button>
+      <div class="confirm" id="confirm" hidden>
+        <p id="confirmText"></p>
+        <div class="actions"><button class="keep" id="keepBtn" type="button">남겨두기</button><button class="del" id="delBtn" type="button">삭제</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>/*__INIT__*/</script>
+<script>
+(() => {
+  const RM = matchMedia('(prefers-reduced-motion: reduce)');
+  const $ = (id) => document.getElementById(id);
+  document.addEventListener('touchstart', () => {}, { passive: true }); // lets :active fire on touch-down
+
+  // ---------- bridge to Scriptable ----------
+  // Each request is a navigation to reelnote://m?<json> that Scriptable intercepts; Scriptable answers by
+  // calling bridgeReply. Requests go one at a time so no navigation can cancel another.
+  // Opened in a plain browser (no REELNOTE_INIT), the page runs on demo data with fake replies.
+  const INIT = window.REELNOTE_INIT || null;
+  const pending = new Map(); let seq = 0, line = Promise.resolve();
+  window.bridgeReply = (id, res) => { const done = pending.get(id); pending.delete(id); if (done) done(res); };
+  const send = (msg) => (line = line.then(() => new Promise((resolve) => {
+    if (!INIT) { setTimeout(() => resolve({ ok: true }), 700); return; }
+    const id = ++seq; pending.set(id, resolve);
+    location.href = 'reelnote://m?' + encodeURIComponent(JSON.stringify({ ...msg, id }));
+  })));
+
+  // Spring with Apple's damping ratio + response. Always continues from the live value and velocity.
+  class Spring {
+    constructor(value, apply) { this.x = value; this.t = value; this.v = 0; this.apply = apply; this.raf = 0; this.onRest = null; apply(value); }
+    set(x) { cancelAnimationFrame(this.raf); this.raf = 0; this.x = this.t = x; this.v = 0; this.apply(x); this.onRest && this.onRest(x); }
+    to(t, { damping = 1, response = 0.4, velocity } = {}) {
+      if (RM.matches) { this.set(t); return; }
+      this.t = t;
+      if (velocity !== undefined) this.v = velocity;
+      this.k = (2 * Math.PI / response) ** 2;
+      this.c = 4 * Math.PI * damping / response;
+      if (!this.raf) { this.last = performance.now(); this.raf = requestAnimationFrame(this.step); }
+    }
+    stop() { cancelAnimationFrame(this.raf); this.raf = 0; }
+    step = (now) => {
+      const dt = Math.min(0.064, (now - this.last) / 1000); this.last = now;
+      const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
+      for (let i = 0; i < n; i++) { const a = -this.k * (this.x - this.t) - this.c * this.v; this.v += a * h; this.x += this.v * h; }
+      if (Math.abs(this.v) < 2 && Math.abs(this.x - this.t) < 0.3) { this.raf = 0; this.x = this.t; this.v = 0; this.apply(this.x); this.onRest && this.onRest(this.x); return; }
+      this.apply(this.x); this.raf = requestAnimationFrame(this.step);
+    };
+  }
+  const project = (v, d = 0.998) => (v / 1000) * d / (1 - d);
+  const rubberband = (o, dim, c = 0.55) => (o * dim * c) / (dim + c * Math.abs(o));
+  const tracker = () => { const s = []; return {
+    add(p) { const t = performance.now(); s.push({ p, t }); while (s.length > 2 && t - s[0].t > 80) s.shift(); },
+    v() { if (s.length < 2) return 0; const a = s[0], b = s[s.length - 1]; return (b.p - a.p) / Math.max(1, b.t - a.t) * 1000; } }; };
+
+  const screen = $('screen'), home = $('home'), save = $('save'), shade = $('homeShade');
+  const W = () => screen.clientWidth;
+  let homeX = 0, homeScale = 1;
+  const applyHome = () => {
+    home.style.transform = RM.matches ? 'none' : `translateX(${homeX}px) scale(${homeScale})`;
+    home.style.borderRadius = homeScale < 0.999 ? '14px' : '0';
+  };
+
+  // ---------- push / pop (same path in and out) ----------
+  const push = new Spring(W(), (x) => {
+    const w = W(), p = 1 - Math.min(1, Math.max(0, x / w));
+    if (RM.matches) { save.style.transform = 'none'; save.style.opacity = String(p); }
+    else { save.style.transform = `translateX(${x}px)`; save.style.opacity = '1'; }
+    homeX = -(w - Math.max(0, x)) * 0.3; shade.style.opacity = String(0.12 * p); applyHome();
+    save.style.visibility = p > 0.001 ? 'visible' : 'hidden';
+  });
+  push.onRest = (x) => { const shown = x < 1; save.setAttribute('aria-hidden', String(!shown)); home.inert = shown; save.inert = !shown; };
+  push.set(W());
+  const openSave = () => push.to(0, { damping: 1, response: 0.38 });
+  const closeSave = (velocity) => push.to(W(), { damping: 1, response: 0.38, velocity });
+  $('backBtn').addEventListener('click', () => closeSave());
+
+  // edge swipe back, 1:1 with the finger
+  save.addEventListener('pointerdown', (e) => {
+    if (e.clientX > 28 || e.button !== 0) return;
+    push.stop(); save.setPointerCapture(e.pointerId);
+    const startX = e.clientX, startVal = push.x, tr = tracker(); tr.add(startVal);
+    const move = (ev) => { let x = startVal + (ev.clientX - startX); if (x < 0) x = rubberband(x, W()); push.x = x; push.apply(x); tr.add(x); };
+    const up = () => {
+      save.removeEventListener('pointermove', move); save.removeEventListener('pointerup', up); save.removeEventListener('pointercancel', up);
+      const v = tr.v(), end = push.x + project(v);
+      if (end > W() / 2) closeSave(v); else push.to(0, { damping: 1, response: 0.38, velocity: v });
+    };
+    save.addEventListener('pointermove', move); save.addEventListener('pointerup', up); save.addEventListener('pointercancel', up);
+  });
+
+  // ---------- sheet ----------
+  const sheet = $('sheet'), scrim = $('scrim');
+  const H = () => sheet.offsetHeight + 24;
+  const sheetSpring = new Spring(2000, (y) => {
+    const h = H(), p = 1 - Math.min(1, Math.max(0, y / h));
+    if (RM.matches) { sheet.style.transform = 'none'; sheet.style.opacity = String(p); }
+    else { sheet.style.transform = `translateY(${y}px)`; sheet.style.opacity = '1'; }
+    scrim.style.opacity = String(p);
+    homeScale = 1 - 0.06 * p; applyHome();
+  });
+  sheetSpring.onRest = (y) => {
+    const closed = y > 1;
+    sheet.style.visibility = closed ? 'hidden' : 'visible'; scrim.classList.toggle('open', !closed);
+    if (closed && lastFocus) { lastFocus.focus({ preventScroll: true }); lastFocus = null; }
+  };
+  let lastFocus = null, sheetBusy = false;
+  const showSheet = () => {
+    lastFocus = document.activeElement;
+    sheet.style.visibility = 'visible'; scrim.classList.add('open');
+    if (sheetSpring.x > H()) sheetSpring.set(H());
+    sheetSpring.to(0, { damping: 1, response: 0.36 });
+    setTimeout(() => $('catName').focus({ preventScroll: true }), RM.matches ? 0 : 180);
+  };
+  const hideSheet = (velocity) => { if (sheetBusy) return; scrim.classList.remove('open'); sheetSpring.to(H(), { damping: 1, response: 0.32, velocity }); };
+  scrim.addEventListener('click', () => hideSheet());
+  $('sheetCancel').addEventListener('click', () => hideSheet());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && scrim.classList.contains('open')) hideSheet(); });
+
+  const grab = $('grab');
+  grab.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button') || e.button !== 0 || sheetBusy) return;
+    sheetSpring.stop(); grab.setPointerCapture(e.pointerId);
+    const startY = e.clientY, startVal = sheetSpring.x, tr = tracker(); tr.add(startVal);
+    const move = (ev) => { let y = startVal + (ev.clientY - startY); if (y < 0) y = rubberband(y, H()); sheetSpring.x = y; sheetSpring.apply(y); tr.add(y); };
+    const up = () => {
+      grab.removeEventListener('pointermove', move); grab.removeEventListener('pointerup', up); grab.removeEventListener('pointercancel', up);
+      const v = tr.v(), end = sheetSpring.x + project(v);
+      if (end > H() * 0.5) hideSheet(v); else sheetSpring.to(0, { damping: 0.8, response: 0.3, velocity: v });
+    };
+    grab.addEventListener('pointermove', move); grab.addEventListener('pointerup', up); grab.addEventListener('pointercancel', up);
+  });
+
+  // ---------- categories (stack: most recently created or used first) ----------
+  let cats = INIT ? INIT.cats : [
+    { name: '개발', count: 21 }, { name: '요리', count: 17 }, { name: '운동', count: 6 }, { name: 'AI', count: 9 }, { name: '여행', count: 8 },
+  ];
+  const list = $('catList');
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const render = () => {
+    list.innerHTML = cats.map((c) => `<li class="row" data-cat="${esc(c.name)}">
+      <button class="row-main" type="button" data-pick="${esc(c.name)}"><span class="row-name">${esc(c.name)}</span><span class="row-meta">노트 ${c.count}개</span></button>
+      <button class="edit-btn" type="button" data-edit="${esc(c.name)}" aria-label="${esc(c.name)} 편집">edit</button></li>`).join('');
+    list.hidden = !cats.length; $('catEmpty').hidden = !!cats.length;
+  };
+  // FLIP: rows spring from where they were to where they are now
+  const reflow = (mutate, freshName) => {
+    const before = new Map([...list.children].map((r) => [r.dataset.cat, r.getBoundingClientRect().top]));
+    mutate(); render();
+    [...list.children].forEach((r) => {
+      const was = before.get(r.dataset.cat), now = r.getBoundingClientRect().top;
+      if (r.dataset.cat === freshName) {
+        r.classList.add('fresh'); setTimeout(() => r.classList.remove('fresh'), 900);
+        if (was === undefined) new Spring(0, (s) => { r.style.opacity = String(s); r.style.transform = `scale(${0.92 + 0.08 * s})`; }).to(1, { damping: 1, response: 0.4 });
+      }
+      if (was !== undefined && Math.abs(was - now) > 0.5) new Spring(was - now, (d) => { r.style.transform = `translateY(${d}px)`; r.style.zIndex = r.dataset.cat === freshName ? '1' : ''; }).to(0, { damping: 1, response: 0.45 });
+    });
+  };
+  const toTop = (name) => reflow(() => { const i = cats.findIndex((c) => c.name === name); if (i > 0) cats.unshift(cats.splice(i, 1)[0]); }, name);
+  render();
+
+  // nav bar material appears only when content scrolls under it
+  const homeScroll = $('homeScroll'), homeNav = $('homeNav');
+  homeScroll.addEventListener('scroll', () => homeNav.classList.toggle('scrolled', homeScroll.scrollTop > 36), { passive: true });
+
+  // ---------- pick → save screen ----------
+  let chosen = 'auto';
+  const label = (name) => (name === 'auto' ? '자동 분류' : name);
+  const pick = (name) => { chosen = name; $('chosen').textContent = label(name); resetSave(); openSave(); };
+  $('home').addEventListener('click', (e) => {
+    const ed = e.target.closest('[data-edit]'); if (ed) { openEdit(ed.dataset.edit); return; }
+    const p = e.target.closest('[data-pick]'); if (p) pick(p.dataset.pick);
+  });
+
+  const setBusy = (btn, text) => { btn.disabled = true; btn.classList.add('busy'); btn.textContent = text; };
+  const clearBusy = (btn) => { btn.classList.remove('busy'); };
+
+  // ---------- sheet modes ----------
+  let mode = 'edit', editing = null;
+  const nameIn = $('catName'), nameErr = $('nameErr'), primary = $('sheetPrimary');
+  const validateName = () => {
+    const v = nameIn.value.trim();
+    let msg = '';
+    if (cats.some((c) => c.name === v && c.name !== editing)) msg = '이미 있는 카테고리예요. 다른 이름을 써주세요.';
+    else if (v.startsWith('#')) msg = '#으로 시작하는 이름은 쓸 수 없어요.';
+    else if (v.toLowerCase() === 'auto' || v === '자동 분류') msg = '자동 분류용 이름이라 쓸 수 없어요.';
+    nameErr.textContent = msg;
+    primary.disabled = !v || !!msg || (mode === 'edit' && v === editing);
+  };
+  nameIn.addEventListener('input', validateName);
+  nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !primary.disabled) primary.click(); });
+  const openEdit = (name) => {
+    mode = 'edit'; editing = name; $('sheetTitle').textContent = '카테고리 편집';
+    nameIn.value = name; primary.textContent = '이름 저장'; clearBusy(primary);
+    $('deleteBtn').hidden = false; $('confirm').hidden = true; validateName(); showSheet();
+  };
+  const openNew = () => {
+    mode = 'new'; editing = null; $('sheetTitle').textContent = '새 카테고리';
+    nameIn.value = ''; nameIn.placeholder = '예: 캠핑'; primary.textContent = '만들고 선택'; clearBusy(primary);
+    $('deleteBtn').hidden = true; $('confirm').hidden = true; validateName(); showSheet();
+  };
+  $('newBtn').addEventListener('click', openNew);
+
+  // a sheet action waits for GitHub: the button shows progress, an error keeps the sheet open
+  const sheetAction = async (btn, busyText, msg, idleText) => {
+    sheetBusy = true; setBusy(btn, busyText); nameIn.disabled = true;
+    const res = await send(msg);
+    sheetBusy = false; clearBusy(btn); nameIn.disabled = false;
+    if (res.ok) return true;
+    btn.textContent = idleText; btn.disabled = false; nameErr.textContent = res.error;
+    return false;
+  };
+  primary.addEventListener('click', async () => {
+    const v = nameIn.value.trim(); if (primary.disabled) return;
+    if (mode === 'edit') {
+      const old = editing;
+      if (!(await sheetAction(primary, '바꾸는 중…', { op: 'rename', from: old, to: v }, '이름 저장'))) return;
+      const c = cats.find((x) => x.name === old); if (c) c.name = v;
+      if (chosen === old) chosen = v;
+      render(); hideSheet(); flash(`이름을 '${v}'(으)로 바꿨어요`);
+    } else {
+      if (!(await sheetAction(primary, '만드는 중…', { op: 'create', name: v }, '만들고 선택'))) return;
+      hideSheet();
+      setTimeout(() => { reflow(() => cats.unshift({ name: v, count: 0 }), v); setTimeout(() => pick(v), RM.matches ? 0 : 320); }, RM.matches ? 0 : 160);
+    }
+  });
+  $('deleteBtn').addEventListener('click', () => {
+    const c = cats.find((x) => x.name === editing);
+    $('confirmText').textContent = c && c.count ? `노트 ${c.count}개는 남은 카테고리로 다시 분류돼요.` : '이 카테고리에는 노트가 없어요.';
+    $('deleteBtn').hidden = true; $('confirm').hidden = false; $('keepBtn').focus();
+  });
+  $('keepBtn').addEventListener('click', () => { $('confirm').hidden = true; $('deleteBtn').hidden = false; });
+  $('delBtn').addEventListener('click', async () => {
+    const name = editing, del = $('delBtn'), keep = $('keepBtn');
+    keep.disabled = true;
+    const ok = await sheetAction(del, '삭제 중…', { op: 'delete', name }, '삭제');
+    keep.disabled = false; del.textContent = '삭제';
+    if (!ok) return;
+    hideSheet();
+    setTimeout(() => { reflow(() => { cats = cats.filter((c) => c.name !== name); }); flash(`'${name}' 삭제됨`); }, RM.matches ? 0 : 160);
+  });
+
+  // ---------- save ----------
+  const videoIn = $('videoUrl'), dmIn = $('dmUrl'), memoIn = $('memo'), saveErr = $('saveErr'), saveBtn = $('saveBtn');
+  const reelRe = /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p)\/[A-Za-z0-9_-]+/;
+  const isUrl = (s) => { try { const u = new URL(s); return u.protocol === 'https:' || u.protocol === 'http:'; } catch { return false; } };
+  const validateSave = () => {
+    const v = videoIn.value.trim(), d = dmIn.value.trim();
+    let msg = '';
+    if (!v) msg = '영상 링크를 넣어주세요.';
+    else if (!reelRe.test(v)) msg = '영상 링크는 instagram.com/reel/… 또는 /p/… 형식이어야 해요.';
+    else if (d && !isUrl(d)) msg = 'DM 링크가 올바른 주소가 아니에요. https://로 시작하는지 확인해주세요.';
+    saveErr.textContent = msg; saveBtn.disabled = !!msg; return !msg;
+  };
+  videoIn.value = INIT ? INIT.shared : 'https://www.instagram.com/reel/C8xYz2Qp/?igsh=MWx0b2N3';
+  videoIn.addEventListener('input', validateSave); dmIn.addEventListener('input', validateSave);
+  const checkSvg = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 9.5 3.5 3.5 7.5-8"/></svg>';
+  const resetSave = () => { saveBtn.classList.remove('done', 'busy'); saveBtn.textContent = '저장'; validateSave(); };
+  let saving = false;
+  $('saveForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); if (saving || !validateSave() || saveBtn.classList.contains('done')) return;
+    saving = true; setBusy(saveBtn, '저장 중…');
+    const res = await send({ op: 'save', category: chosen, video_url: videoIn.value.trim(),
+      dm_url: dmIn.value.trim() || null, memo: memoIn.value.trim() || null });
+    saving = false; clearBusy(saveBtn);
+    if (!res.ok) { saveBtn.textContent = '다시 저장'; saveBtn.disabled = false; saveErr.textContent = res.error; return; }
+    saveBtn.classList.add('done'); saveBtn.innerHTML = `${checkSvg}저장됨`;
+    new Spring(0.94, (s) => { saveBtn.style.transform = `scale(${s})`; }).to(1, { damping: 0.7, response: 0.35 });
+    setTimeout(() => {
+      if (INIT && INIT.inShareSheet) { send({ op: 'close' }); return; } // the share sheet closes; nothing left to do here
+      closeSave();
+      if (chosen !== 'auto') setTimeout(() => toTop(chosen), RM.matches ? 0 : 260);
+      flash(`${label(chosen)}에 저장했어요`);
+      dmIn.value = ''; memoIn.value = '';
+    }, RM.matches ? 300 : 650);
+  });
+
+  // ---------- status ----------
+  const banner = $('banner'); let bannerT = 0;
+  const flash = (msg) => { banner.textContent = msg; banner.classList.add('show'); clearTimeout(bannerT); bannerT = setTimeout(() => banner.classList.remove('show'), 1800); };
+
+  addEventListener('resize', () => { if (push.x > 1) push.set(W()); if (sheetSpring.x > 1) sheetSpring.set(H()); });
+})();
+</script>
+</body>
+</html>

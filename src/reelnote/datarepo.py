@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 
 CATEGORIES = "vault/categories.md"
+# git's messages when GitHub cannot be reached at all (no Wi-Fi yet after wake, DNS down)
+OFFLINE = re.compile(r"could not resolve host|failed to connect|couldn't connect|network is unreachable|timed out|connection refused|connection reset", re.I)
 
 
 class SyncError(Exception):
@@ -57,6 +59,16 @@ class DataRepo:
             res = self._git("rebase", "--continue", check=False)
         if self._unmerged():
             raise SyncError(f"unresolved conflicts after pull: {self._unmerged()}")
+
+    def remote_head(self) -> str | None:
+        """Remote HEAD sha; None when offline; "" on any other failure, so the full run reports it."""
+        res = self._git("ls-remote", "origin", "HEAD", check=False)
+        if res.returncode == 0:
+            return res.stdout.split("\t")[0].strip()
+        return None if OFFLINE.search(res.stderr) else ""
+
+    def local_head(self) -> str:
+        return self._git("rev-parse", "HEAD").stdout.strip()
 
     def inbox_files(self) -> list[Path]:
         return sorted((self.path / "inbox").glob("*.json"))

@@ -53,7 +53,9 @@ Obsidian (Obsidian Git) ◀────── reelnote-data/vault/  ◀───
 
 - The UI is HTML/JS inside a Scriptable `WebView`, presented from the iOS share sheet.
 - The prototype at `docs/prototype/share-sheet.html` is the starting code for the real UI.
-- The WebView returns one result to Scriptable when it closes: `{ categoryOps: [...], save: {...} | null }`. Scriptable then makes all GitHub API calls itself, so the WebView never sees the token.
+- Each action (save, create, rename, delete) is sent to Scriptable as a navigation to `reelnote://m?<json>`, which Scriptable intercepts with `shouldAllowRequest` and answers by calling `bridgeReply` in the page. Scriptable makes all GitHub API calls itself, so the WebView never sees the token. The UI waits for each reply, so "저장됨" means the commit landed.
+- `evaluateJavaScript(js, true)` is not used: on iOS it left the page blank (spike, 2026-10-20).
+- After a save in the share sheet, Scriptable calls `Script.complete()` to close it.
 - The GitHub token is a fine-grained PAT scoped to `reelnote-data` with Contents read/write only. It is stored in Scriptable's `Keychain` and never in the script file.
 - **Fallback:** if the spike in §8 shows the WebView cannot run inside the share extension, use Scriptable's native `UITable` and `Alert`. The flow stays the same, and only the visual layer changes.
 - **Later:** a SwiftUI app with a Share Extension (Apple Developer Program, $99/year) can replace Scriptable. The inbox format stays the same.
@@ -133,7 +135,7 @@ reelnote/
     inbox.py          pull data repo, read inbox, commit/push results. The only module that knows the queue is git.
     shortcode.py      canonical URL -> shortcode (/reel/, /reels/, /p/ are equal; tracking params dropped)
     fetch.py          yt-dlp: video + caption; optional --cookies-from-browser
-    extract.py        whisper.cpp transcript; ffmpeg frames (1 fps, near-duplicates dropped) -> Vision OCR; DM page text (HTML main text, PDF text)
+    extract.py        whisper.cpp transcript; ffmpeg frames (2 fps, up to 600 = 5 min, near-duplicates dropped) -> Vision OCR; DM page text (HTML main text, PDF text)
     llm.py            provider chain: claude -p -> codex exec; JSON-schema validation; limit detection
     index.py          SQLite: item state, embeddings (Ollama bge-m3), similarity queries
     organize.py       hub assignment; `regroup` re-clusters unassigned notes (HDBSCAN); pinned hubs never change
@@ -173,8 +175,8 @@ Thresholds for step 5 are tuned on real data and stored in config.
 
 ### 5.4 Scheduling
 
-- `launchd` runs `reelnote run` at login and every 15 minutes.
-- The phone writes to GitHub, not to the Mac, so a local folder watch is not possible. The 15-minute pull is the trigger.
+- `launchd` runs `reelnote run` at login and every minute. Each run first asks GitHub for the remote HEAD (`git ls-remote`). It starts the full run only when HEAD changed or 15 minutes have passed since the last full run, which retries items left in the inbox. When GitHub cannot be reached (no Wi-Fi yet after wake), the run exits quietly and the next minute tries again; no notification is shown.
+- The phone writes to GitHub, not to the Mac, so a local folder watch is not possible. The one-minute `ls-remote` check is the trigger.
 - A lock file prevents overlapping runs.
 
 ## 6. Vault format

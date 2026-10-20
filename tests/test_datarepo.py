@@ -154,3 +154,13 @@ def test_commit_skips_atomic_write_temp_files(remote_and_clones):
     assert DataRepo(mac).commit("c")
     files = subprocess.run(["git", "-C", str(mac), "ls-files"], capture_output=True, text=True).stdout.split()
     assert "vault/notes/a.md" in files and not [f for f in files if f.endswith(".tmp")]
+
+
+def test_remote_head(remote_and_clones, tmp_path):
+    from reelnote.datarepo import DataRepo
+    mac, _phone = remote_and_clones
+    r = DataRepo(mac)
+    assert r.remote_head() == r.local_head()
+    git(mac, "remote", "set-url", "origin", "https://nonexistent.invalid/x.git")
+    assert r.remote_head() is None  # DNS failure counts as offline
+    assert DataRepo(tmp_path / "missing").remote_head() == ""

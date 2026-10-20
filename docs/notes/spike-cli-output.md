@@ -30,3 +30,11 @@ Consequences for Task 6:
 - `reelnote run` against a local clone of `reelnote-data`, pushing to a local bare copy, so the real remote was untouched. 1 item went to `written` in about 60 s.
 - Note quality: a Korean title and summary, and 11 key facts with program names and URLs. Category `auto` was picked correctly from `categories.md`.
 - Whisper misheard "leetcode" as "lead code" and "SWE" as "suite", but the OCR text had the right words, so the note was correct. Combining the transcript with screen text works as intended.
+
+## Phone: Scriptable share sheet (2026-10-20, on the owner's iPhone)
+
+- Instagram's Share → **Run Script** lists a script only after its Share Sheet Inputs are enabled.
+- `args.urls` holds the Reel URL (`https://www.instagram.com/reel/<code>/?vrfl=…`); `args.plainTexts` is empty.
+- A `WebView` renders inside the share sheet. While `evaluateJavaScript(js, true)` (callback) was pending, the page stayed blank. Polling `evaluateJavaScript` and intercepting a fake-scheme navigation in `shouldAllowRequest` both returned the page's result; the UI uses the navigation bridge.
+- With a fine-grained PAT from the Keychain, the share extension read `categories.md` (200, ~350 ms), created a file (201, ~1.5 s) and deleted it (200). Korean decoded correctly.
+- `loadFile` of HTML without `<meta charset="utf-8">` showed mojibake.

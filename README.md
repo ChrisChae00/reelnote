@@ -4,13 +4,13 @@ A personal organizer for the information buried in Instagram Reels and Shorts.
 
 Saving a Reel in Instagram is easy. Finding it again later is not, and after a few hundred saves you forget what you kept. reelnote takes the video link (and the extra-info link the creator sent by DM) from your phone in one step. Your Mac then reads the video itself and files it as an Obsidian note, grouped with similar notes.
 
-> **Status:** Mac pipeline works; phone share UI not built yet.
+> **Status:** Mac pipeline works. Phone share UI built; first on-device run pending.
 
 ## How it works
 
 1. **Phone (Scriptable share sheet):** Tap Share in Instagram and pick a category, or leave it on Auto to let the AI choose. Then confirm the video link and add the DM link and a memo if you have them.
 2. **Queue (private GitHub repo):** Each save becomes one JSON file in the private data repo's `inbox/`. Items wait there while the Mac is off.
-3. **Mac (pipeline):** When the Mac is on, `launchd` pulls the inbox and processes each item:
+3. **Mac (pipeline):** When the Mac is on, `launchd` checks GitHub every minute and, when something new arrived, pulls the inbox and processes each item:
    - Dedupes by Instagram shortcode, so the same post is never processed twice.
    - Downloads the video and caption with `yt-dlp`.
    - Extracts speech with `whisper.cpp` and on-screen text with macOS Vision OCR.
@@ -63,6 +63,16 @@ To stop the scheduled runs:
 ```bash
 launchctl bootout gui/$(id -u)/com.reelnote.run
 ```
+
+## Setup (iPhone)
+
+1. Create a fine-grained GitHub token: **Only select repositories → `reelnote-data`**, **Contents: Read and write**, nothing else.
+2. Install [Scriptable](https://scriptable.app), add a script named `reelnote`, and paste in `phone/dist/reelnote.js`.
+3. In the script's settings, turn on **Share Sheet Inputs → URLs** and **Text**.
+4. Run it once in the app and paste the token. It is stored in the iOS Keychain only.
+5. In Instagram: Share → **Run Script** → `reelnote`.
+
+To change the UI, edit `phone/ui.html` (open it in a browser to try it with demo data) or `phone/reelnote.js`, then run `node phone/test.mjs && node phone/build.mjs`.
 
 ## Retrying a failed item
 

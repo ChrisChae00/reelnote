@@ -64,8 +64,8 @@ def frame_texts(video: Path, workdir: Path, run=subprocess.run, ocr=None) -> lis
     for old in frames.iterdir():
         if old.is_file():
             old.unlink()
-    _run(run, "ffmpeg", ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-vf", "fps=1",
-                         "-frames:v", "300", str(frames / "%04d.png")], 600)
+    _run(run, "ffmpeg", ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-vf", "fps=2",
+                         "-frames:v", "600", str(frames / "%04d.png")], 600)
     return dedupe_lines([ocr(p) for p in sorted(frames.glob("*.png"))])
 
 
