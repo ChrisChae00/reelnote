@@ -3,6 +3,7 @@
 // 2. Does a JS -> Scriptable result handoff work there?
 // 3. Can the share extension read and write reelnote-data with a Keychain token?
 // 4. Is the full prototype smooth inside the share extension (memory limit)?
+// v2: no "#" in the spike page (first run showed a blank WebView), final log in an Alert.
 // Run once inside the Scriptable app (stores the token), then from Instagram: Share > Scriptable.
 
 const REPO = "ChrisChae00/reelnote-data"
@@ -65,10 +66,9 @@ const shared = (args.urls || [])[0] || (args.plainTexts || [])[0] || ""
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c])
 const html = `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{font:17px -apple-system,system-ui;margin:0;padding:16px;background:#f2f2f7;color:#000}
-@media(prefers-color-scheme:dark){body{background:#000;color:#fff}button{background:#1c1c1e;color:#fff}}
-h1{font-size:28px;margin:8px 0 12px}button{display:block;width:100%;padding:14px;margin:6px 0;border:0;border-radius:12px;font:inherit;text-align:left;background:#fff}
-input{width:100%;box-sizing:border-box;padding:12px;font:inherit;border-radius:10px;border:1px solid #ccc}
+body{font:17px -apple-system,system-ui;margin:0;padding:16px;background:rgb(242,242,247);color:rgb(0,0,0)}
+h1{font-size:28px;margin:8px 0 12px}button{display:block;width:100%;padding:14px;margin:6px 0;border:0;border-radius:12px;font:inherit;text-align:left;background:rgb(255,255,255);color:rgb(0,0,0)}
+input{width:100%;box-sizing:border-box;padding:12px;font:inherit;border-radius:10px;border:1px solid rgb(200,200,200)}
 pre{white-space:pre-wrap;font-size:13px}
 </style>
 <h1>Spike</h1>
@@ -80,7 +80,8 @@ ${["auto", ...cats].map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).jo
 document.querySelectorAll("button").forEach(b => b.onclick = () =>
   window.done && window.done({ category: b.dataset.c, memo: document.getElementById("memo").value }))
 function show(t){ document.querySelectorAll("button,input").forEach(e => e.remove()); document.getElementById("log").textContent = t + "\\n\\nClose this sheet to continue." }
-</script>`
+</script>
+<p>Hash test: A#B after-hash (if "after-hash" is missing, loadHTML cuts at "#")</p>`
 
 const wv = new WebView()
 await wv.loadHTML(html)
@@ -92,6 +93,12 @@ Pasteboard.copy(log.join("\n"))
 await wv.evaluateJavaScript(`show(${JSON.stringify(log.join("\n") + "\n\n(copied to clipboard)")})`).catch(() => {})
 await closed
 
+const r = new Alert()
+r.title = "Spike log (also in clipboard)"
+r.message = log.join("\n")
+r.addAction("OK")
+await r.present()
+
 const a = new Alert()
 a.title = "Open the full prototype?"
 a.message = "Check that springs, sheet drag and edge swipe stay smooth here."
@@ -99,7 +106,10 @@ a.addAction("Open")
 a.addCancelAction("Skip")
 if ((await a.present()) === 0) {
   const proto = new WebView()
-  await proto.loadHTML(await new Request(PROTO).loadString())
+  const fm = FileManager.local()
+  const file = fm.joinPath(fm.temporaryDirectory(), "share-sheet.html")
+  fm.writeString(file, await new Request(PROTO).loadString())
+  await proto.loadFile(file)
   await proto.present(true)
 }
 Script.complete()
