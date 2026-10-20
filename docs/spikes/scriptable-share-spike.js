@@ -4,6 +4,7 @@
 // 3. Can the share extension read and write reelnote-data with a Keychain token?
 // 4. Is the full prototype smooth inside the share extension (memory limit)?
 // v2: no "#" in the spike page (first run showed a blank WebView), final log in an Alert.
+// v3: v2 was still blank, so bisect: A plain page, B spike page without callback, C with callback.
 // Run once inside the Scriptable app (stores the token), then from Instagram: Share > Scriptable.
 
 const REPO = "ChrisChae00/reelnote-data"
@@ -13,6 +14,7 @@ const log = []
 const t0 = Date.now()
 const note = (k, v) => log.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
 
+note("version", "v3")
 note("in share sheet", config.runsInActionExtension)
 note("args.urls", args.urls)
 note("args.plainTexts", args.plainTexts)
@@ -83,6 +85,24 @@ function show(t){ document.querySelectorAll("button,input").forEach(e => e.remov
 </script>
 <p>Hash test: A#B after-hash (if "after-hash" is missing, loadHTML cuts at "#")</p>`
 
+async function seen(step) {
+  const q = new Alert()
+  q.title = `Step ${step}: did the page show any text?`
+  q.addAction("Yes")
+  q.addAction("No")
+  note(`step ${step} visible`, (await q.present()) === 0)
+}
+
+const a1 = new WebView()
+await a1.loadHTML("<h1 style='font-size:40px'>Step A: plain page</h1>")
+await a1.present(true)
+await seen("A")
+
+const b1 = new WebView()
+await b1.loadHTML(html)
+await b1.present(true)
+await seen("B")
+
 const wv = new WebView()
 await wv.loadHTML(html)
 const closed = wv.present(true).then(() => "closed without choosing")
@@ -92,6 +112,7 @@ note("total ms", Date.now() - t0)
 Pasteboard.copy(log.join("\n"))
 await wv.evaluateJavaScript(`show(${JSON.stringify(log.join("\n") + "\n\n(copied to clipboard)")})`).catch(() => {})
 await closed
+await seen("C")
 
 const r = new Alert()
 r.title = "Spike log (also in clipboard)"
