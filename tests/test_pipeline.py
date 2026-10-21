@@ -13,8 +13,8 @@ from reelnote import pipeline, vault
 class FakeLLM:
     def __init__(self, note=None, limited=False):
         self.limited = limited
-        self.note = note or {"title": "맥북 생산성 앱 7개", "summary": "앱 소개", "key_facts": ["Raycast: 런처"],
-                             "keywords": ["mac"], "category": "생산성"}
+        self.note = note or {"title": "맥북 생산성 앱 7개", "summary": "앱 소개", "content": "### 앱\n- **Raycast**: 런처",
+                             "key_facts": ["Raycast: 런처"], "keywords": ["mac"], "category": "생산성", "tags": []}
         self.calls = []
     def run(self, prompt, schema):
         self.calls.append(schema)
@@ -39,9 +39,9 @@ def make(tmp_path, llm=None, vec=(1.0, 0.0), fetch=None, page=None):
                          llm=llm or FakeLLM(), embed=lambda text: list(vec), sleep=lambda s: None)
     return cfg, store, deps
 
-def item(id="i1", code="C8xYz2Qp", dm=None, memo=None, category="생산성"):
+def item(id="i1", code="C8xYz2Qp", dm=None, memo=None, category="생산성", tags=()):
     return SaveItem(id=id, video_url=f"https://www.instagram.com/reel/{code}/", dm_url=dm, memo=memo,
-                    category=category, created_at="2026-10-17T18:30:12+09:00")
+                    category=category, created_at="2026-10-17T18:30:12+09:00", tags=tuple(tags))
 
 def only_note(cfg):
     notes = list((cfg.vault / "notes").glob("*.md"))
@@ -53,7 +53,8 @@ def test_happy_path_writes_note(tmp_path):
     assert pipeline.process_save(item(dm="https://n.site/x", memo="참고"), cfg, store, deps, ["생산성"]) == "written"
     p = only_note(cfg)
     fm, body = vault.read_note(p)
-    assert p.name == "2026-10-17 맥북 생산성 앱 7개.md"
+    assert p.name == "(생산성) 맥북 생산성 앱 7개.md"
+    assert "### 앱\n- **Raycast**: 런처" in body and "On-screen" not in body
     assert fm["category"] == "생산성" and fm["category_source"] == "manual" and fm["status"] == "done"
     assert fm["dm_links"] == ["https://n.site/x"] and fm["url"] == "https://www.instagram.com/p/C8xYz2Qp/"
     assert "DM 본문" in body and "- 참고" in body and "받아쓰기" in body
@@ -516,3 +517,29 @@ def test_apply_rename_writes_categories_md_atomic_utf8(tmp_path):
     pipeline.apply_rename(RenameOp(id="r1", old="생산성", new="업무툴"), cfg, store)
     assert "업무툴" in (cfg.vault / "categories.md").read_bytes().decode("utf-8")
     assert not list(cfg.vault.glob(".categories.md.*.tmp"))
+
+
+def test_tags_user_plus_known_ai_tags(tmp_path):
+    note = {**FakeLLM().note, "tags": ["AI", "지어낸태그", "생산성"]}
+    cfg, store, deps = make(tmp_path, llm=FakeLLM(note=note))
+    pipeline.process_save(item(code="A1", tags=["이력서"]), cfg, store, deps, ["생산성", "AI"])
+    fm = vault.read_note(only_note(cfg))[0]
+    assert fm["tags"] == ["이력서", "AI"]  # made-up tag dropped, main category not repeated as a tag
+    pipeline.process_save(item(id="i2", code="A1", tags=["면접", "AI"]), cfg, store, deps, ["생산성", "AI"])
+    assert vault.read_note(only_note(cfg))[0]["tags"] == ["이력서", "AI", "면접"]
+    pipeline.write_reports(cfg, store)
+    counts = json.loads((cfg.vault / ".reelnote" / "tag-counts.json").read_text())
+    assert counts == {"AI": 1, "면접": 1, "이력서": 1}
+
+
+def test_category_change_renames_note_file(tmp_path):
+    cfg, store, deps = make(tmp_path)
+    pipeline.process_save(item(code="A1", category="X"), cfg, store, deps, ["X"])
+    assert only_note(cfg).name.startswith("(X) ")
+    pipeline.apply_rename(RenameOp(id="r", old="X", new="Y"), cfg, store)
+    assert only_note(cfg).name == "(Y) 맥북 생산성 앱 7개.md"
+    assert store.get("A1").note_path == "notes/(Y) 맥북 생산성 앱 7개.md"
+    store.set_meta("last_categories", ["Y"])
+    deps.llm = FakeLLM()  # classifies into 생산성
+    pipeline.reclassify_removed(cfg, store, deps, ["생산성"])
+    assert only_note(cfg).name == "(생산성) 맥북 생산성 앱 7개.md"

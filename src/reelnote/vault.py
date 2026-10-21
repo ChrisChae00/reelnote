@@ -7,7 +7,8 @@ from pathlib import Path
 
 import yaml
 
-OWNED_KEYS = {"category", "category_source", "hub", "status", "dm_links", "duplicate_of"}
+OWNED_KEYS = {"category", "category_source", "tags", "hub", "status", "dm_links", "duplicate_of"}
+UNSORTED = "미분류"  # filename prefix for a note without a category
 START, END = "<!-- reelnote:start -->", "<!-- reelnote:end -->"
 _BAD = re.compile(r'[\\/:*?"<>|#^\[\]]')
 _FM = re.compile(r"\A---\n(.*?)\n?---[ \t]*(?:\n|\Z)", re.S)
@@ -15,6 +16,24 @@ _FM = re.compile(r"\A---\n(.*?)\n?---[ \t]*(?:\n|\Z)", re.S)
 
 class BadNote(ValueError):
     pass
+
+
+def tag_name(text) -> str | None:
+    """Obsidian tag rules: no spaces, only letters, digits, _ - /, not all digits."""
+    if not isinstance(text, str):
+        return None
+    t = re.sub(r"[^\w/-]", "", re.sub(r"\s+", "_", text.strip().lstrip("#")))[:40]
+    return None if not t or t.isdigit() else t
+
+
+def merge_tags(*groups) -> list[str]:
+    out: list[str] = []
+    for group in groups:
+        for t in group or []:
+            t = tag_name(t)
+            if t and t not in out:
+                out.append(t)
+    return out
 
 
 def safe_name(text: str) -> str:
@@ -33,8 +52,8 @@ def _inside(path: Path, parent: Path) -> Path:
     return path
 
 
-def note_filename(notes_dir: Path, saved_at: str, title: str) -> Path:
-    base = f"{saved_at} {safe_name(title)}"
+def note_filename(notes_dir: Path, category: str | None, title: str) -> Path:
+    base = f"({safe_name(category or UNSORTED)}) {safe_name(title)}"
     path, n = notes_dir / f"{base}.md", 2
     while path.exists():
         path, n = notes_dir / f"{base} ({n}).md", n + 1
@@ -87,15 +106,15 @@ def read_note(path: Path) -> tuple[dict, str]:
     return fm, body
 
 
-def render_note(fm: dict, *, title: str, summary: str, key_facts: list[str], dm: list[tuple[str, str]],
-                memos: list[str], caption: str, transcript: str, screen_text: str) -> str:
-    title, summary, caption, transcript, screen_text = map(_inert, (title, summary, caption, transcript, screen_text))
-    facts = "\n".join(f"- {_inert(f)}" for f in key_facts) or "-"
+def render_note(fm: dict, *, title: str, summary: str, content: str, dm: list[tuple[str, str]],
+                memos: list[str], caption: str, transcript: str) -> str:
+    title, summary, caption, transcript = map(_inert, (title, summary, caption, transcript))
+    # a mermaid "click" line could turn a diagram node into a link chosen by the video
+    content = re.sub(r"(?m)^\s*click\s.*\n?", "", _inert(content)).strip() or "-"
     dm_md = "\n\n".join(f"### {_inert(url)}\n\n{_inert(text)}" for url, text in dm)
     memo_md = "\n".join(f"- {m}" for m in memos)  # the user's own words: left as typed
-    body = (f"# {title}\n\n## Summary\n\n{summary}\n\n## Key facts\n\n{facts}\n\n## DM info\n\n{dm_md}\n\n"
-            f"## My memo\n\n{memo_md}\n\n## Source\n\n### Caption\n\n{caption}\n\n### Transcript\n\n{transcript}\n\n"
-            f"### On-screen text\n\n{screen_text}\n")
+    body = (f"# {title}\n\n## Summary\n\n{summary}\n\n## Details\n\n{content}\n\n## DM info\n\n{dm_md}\n\n"
+            f"## My memo\n\n{memo_md}\n\n## Source\n\n### Caption\n\n{caption}\n\n### Transcript\n\n{transcript}\n")
     return _dump(fm) + body
 
 
@@ -190,6 +209,11 @@ def write_review(path: Path, *, duplicates, failed, unavailable, dm_errors) -> N
     lines += ["", "## Unavailable videos", ""] + ([f"- [[{s}]]" for s in unavailable] or ["None."])
     lines += ["", "## DM pages that could not be read", ""] + ([f"- [[{s}]]: {_inert(e)}" for s, e in dm_errors] or ["None."])
     _atomic_write(path, "\n".join(lines) + "\n")
+
+
+def facts_md(key_facts: list[str]) -> str:
+    """Details for notes summarized before the model wrote "content"."""
+    return "\n".join(f"- {f}" for f in key_facts)
 
 
 def write_counts(path: Path, counts: dict[str, int]) -> None:

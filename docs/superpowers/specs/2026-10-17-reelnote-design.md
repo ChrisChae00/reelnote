@@ -73,6 +73,7 @@ Obsidian (Obsidian Git) ◀────── reelnote-data/vault/  ◀───
    - Delete asks for confirmation inline and states how many notes will be reclassified.
 3. **New category sheet.**
    - Contains a name field and "만들고 선택" (create and select).
+4. **Save screen.** Video link (prefilled), DM link and memo (optional), and optional tags. Tags in use are shown as chips with their note counts, followed by the category names; the chosen category is not offered. A new tag can be typed in. Tags follow Obsidian's rule: spaces become `_`, only letters, digits, `_`, `-`, `/`, and not all digits.
    - On create, the category goes to the top of the stack and the save screen opens with it selected.
 4. **Save screen.**
    - Shows the selected category as a chip.
@@ -156,7 +157,7 @@ reelnote/
 2. Download the video and caption.
    - **Unavailable** (deleted or private): write a stub note with `status: unavailable` and stop.
 3. Extract the transcript, the on-screen text, and the DM page text (if `dm_url` is set).
-4. Generate the note JSON through the LLM chain: title, summary, key facts, keywords, and a category when the item says `"auto"`.
+4. Generate the note JSON through the LLM chain: title, summary, `content` (the information reorganized in Markdown: `###` groups, bullets, tables, a Mermaid flowchart for a process), key facts (one line each, used by hubs), keywords, 0–3 tags picked only from tags already in use or category names, and a category when the item says `"auto"`. The on-screen text is given to the model but not kept in the note.
 5. Embed the summary and compare it with existing notes.
    - **Very high similarity:** mark it as a duplicate candidate in `review.md` and link it to the original. Nothing is merged automatically.
    - **Medium:** attach it to the nearest hub.
@@ -184,10 +185,11 @@ Thresholds for step 5 are tuned on real data and stored in config.
 ```
 vault/
   categories.md
-  notes/<YYYY-MM-DD> <title>.md
+  notes/(<category>) <title>.md     (미분류) when there is no category; renamed when the category changes
   hubs/<topic>.md
   review.md                       duplicate candidates, failures, unavailable videos
   .reelnote/category-counts.json
+  .reelnote/tag-counts.json         tags in use, read by the phone
 ```
 
 Note frontmatter:
@@ -197,17 +199,18 @@ shortcode: C8xYz2Qp
 url: https://www.instagram.com/reel/C8xYz2Qp/
 category: 생산성
 category_source: manual   # manual | auto
+tags: [AI, 이력서]          # the user's tags plus tags the model reused; never the main category
 hub: "[[Mac productivity apps]]"
 status: done              # done | review | unavailable
 dm_links: [https://example.notion.site/...]
 saved_at: 2026-10-17
 ```
 
-Note body sections: Summary, Key facts, DM info, My memo, Source (transcript, on-screen text, caption).
+Note body sections: Summary, Details (the model's `content`), DM info, My memo, Source (caption, transcript).
 
 Rules that protect hand edits:
 - A note is written in full only once.
-- After that, the Mac changes only frontmatter keys it owns (`category` when `category_source: auto`, `hub`, `status`, `dm_links`) and appends to the "DM info" and "My memo" sections.
+- After that, the Mac changes only frontmatter keys it owns (`category` when `category_source: auto`, `tags` (only adds), `hub`, `status`, `dm_links`) and the `(<category>)` filename prefix and appends to the "DM info" and "My memo" sections.
 - Hub notes keep generated content between `<!-- reelnote:start -->` and `<!-- reelnote:end -->`. Everything outside the markers belongs to the user.
 - `category_source: manual` is never overwritten. The one exception is when the category is deleted; the note then becomes `auto` and is reclassified.
 

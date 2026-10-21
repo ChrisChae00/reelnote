@@ -7,12 +7,13 @@ from pathlib import Path
 
 NOTE_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["title", "summary", "key_facts", "keywords", "category"],
+    "required": ["title", "summary", "content", "key_facts", "keywords", "category", "tags"],
     "properties": {
-        "title": {"type": "string"}, "summary": {"type": "string"},
+        "title": {"type": "string"}, "summary": {"type": "string"}, "content": {"type": "string"},
         "key_facts": {"type": "array", "items": {"type": "string"}},
         "keywords": {"type": "array", "items": {"type": "string"}},
         "category": {"type": ["string", "null"]},
+        "tags": {"type": "array", "items": {"type": "string"}},
     },
 }
 CLASSIFY_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["category"],
@@ -48,7 +49,7 @@ def _clip(text: str) -> str:
 
 
 def note_prompt(*, caption: str, transcript: str, screen_text: str, dm_texts: list[str], memos: list[str],
-                categories: list[str], fixed_category: str | None) -> str:
+                categories: list[str], fixed_category: str | None, known_tags: list[str] = ()) -> str:
     cat_rule = (f'Set "category" to null; the user already chose "{fixed_category}".' if fixed_category else
                 f"Set \"category\" to exactly one of {json.dumps(categories, ensure_ascii=False)}, "
                 "or null if none fits.")
@@ -58,8 +59,16 @@ Only use facts present in the sources below. Do not invent links, prices, or nam
 Write in the main language of the sources (usually Korean).
 - title: short and specific, under 60 characters.
 - summary: 2-4 sentences.
-- key_facts: every concrete item the video gives (names, steps, amounts, links), one per entry.
+- content: the video's information reorganized so it is quick to read, in Markdown. Keep every concrete item
+  (names, steps, amounts, links, conditions); drop filler and repetition. Group with "###" subheadings when there
+  are several groups (never "#" or "##"). Use short bullets, nested bullets for details, **bold** for the name
+  each bullet is about, a table when several items share the same attributes (price, level, duration), and a
+  ```mermaid flowchart only when the video describes a process or sequence. Use a blockquote for a caveat
+  (e.g. links only offered in comments). Short phrases, not full sentences.
+- key_facts: the same concrete items as short one-line facts, one per entry.
 - keywords: 3-8 search terms.
+- tags: 0-3 tags copied exactly from {json.dumps(list(known_tags), ensure_ascii=False)} that clearly apply
+  besides the category; [] if none fits. Never make up a new tag.
 {cat_rule}
 Reply with JSON only.
 

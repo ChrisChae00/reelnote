@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import time
 from dataclasses import dataclass, replace
@@ -80,6 +81,14 @@ def _stem(cfg: Config, store: Store, code: str) -> str | None:
 
 def _merge_into_written(item: SaveItem, path: Path, cfg: Config, store: Store, deps: Deps) -> str:
     rec = store.get(shortcode(item.video_url))
+    if item.tags:
+        fm, _ = vault.read_note(path)
+        have = fm.get("tags")
+        have = [have] if isinstance(have, str) else have if isinstance(have, list) else []
+        merged = vault.merge_tags(have, item.tags)
+        if merged != have:
+            vault.update_frontmatter(path, tags=merged)
+        rec = store.update(rec.code, data={"tags": vault.merge_tags(rec.data.get("tags"), item.tags)})
     if item.memo and item.memo not in rec.data["memos"]:
         vault.append_to_section(path, "My memo", f"- {item.memo}")
         rec = store.update(rec.code, data={"memos": rec.data["memos"] + [item.memo]})
@@ -104,8 +113,10 @@ def _ensure_record(item: SaveItem, store: Store):
         return store.create(code, item.id, {
             "video_url": item.video_url, "memos": [item.memo] if item.memo else [],
             "dm_urls": [item.dm_url] if item.dm_url else [], "category": item.category,
-            "created_at": item.created_at})
+            "created_at": item.created_at, "tags": list(item.tags)})
     data = {}
+    if item.tags:
+        data["tags"] = vault.merge_tags(rec.data.get("tags"), item.tags)
     if item.memo and item.memo not in rec.data["memos"]:
         data["memos"] = rec.data["memos"] + [item.memo]
     if item.dm_url and item.dm_url not in rec.data["dm_urls"]:
@@ -117,10 +128,10 @@ def _ensure_record(item: SaveItem, store: Store):
     return store.update(code, data=data) if data else rec
 
 
-def _fm(rec, *, category, category_source, status, hub=None, duplicate_of=None) -> dict:
+def _fm(rec, *, category, category_source, status, tags=(), hub=None, duplicate_of=None) -> dict:
     d = rec.data
     return {"shortcode": rec.code, "url": canonical_url(rec.code), "category": category,
-            "category_source": category_source, "hub": f"[[{hub}]]" if hub else None, "status": status,
+            "category_source": category_source, "tags": list(tags), "hub": f"[[{hub}]]" if hub else None, "status": status,
             "dm_links": d["dm_urls"], "saved_at": d["created_at"][:10],
             **({"duplicate_of": f"[[{duplicate_of}]]"} if duplicate_of else {})}
 
@@ -129,11 +140,11 @@ def _write_stub(rec, cfg: Config, store: Store) -> None:
     d = rec.data
     manual = d["category"] != AUTO
     fm = _fm(rec, category=d["category"] if manual else None,
-             category_source="manual" if manual else "auto", status="unavailable")
-    path = vault.note_filename(_notes_dir(cfg), fm["saved_at"], f"unavailable {rec.code}")
+             category_source="manual" if manual else "auto", status="unavailable", tags=d.get("tags", []))
+    path = vault.note_filename(_notes_dir(cfg), fm["category"], f"unavailable {rec.code}")
     vault.write_new_note(path, vault.render_note(fm, title=f"Unavailable video {rec.code}",
                          summary="The video was deleted or made private before reelnote could read it.",
-                         key_facts=[], dm=[], memos=d["memos"], caption="", transcript="", screen_text=""))
+                         content="", dm=[], memos=d["memos"], caption="", transcript=""))
     store.update(rec.code, state="written", data={"unavailable": True},
                  note_path=str(path.relative_to(cfg.vault)))
 
@@ -173,7 +184,7 @@ def _step_summarize(rec, cfg, store, deps, categories):
     fixed = d["category"] if d["category"] != AUTO else None
     note = deps.llm.run(note_prompt(caption=d["caption"], transcript=d["transcript"], screen_text=d["screen_text"],
                                     dm_texts=[t for _, t in d["dm"]], memos=d["memos"], categories=categories,
-                                    fixed_category=fixed), NOTE_SCHEMA)
+                                    fixed_category=fixed, known_tags=_known_tags(cfg, categories)), NOTE_SCHEMA)
     return store.update(rec.code, state="summarized", data={"note": note})
 
 
@@ -239,12 +250,15 @@ def _step_write(rec, cfg, store, deps, categories):
     m = organize.match(vec, [e for e in store.embeddings() if e[0] != rec.code], cfg.dup_threshold, cfg.hub_threshold)
     status = "review" if d.get("dm_errors") else "done"
     dup = _stem(cfg, store, m.other) if m.kind == "duplicate" else None
-    fm = _fm(rec, category=category, category_source=source, status=status, duplicate_of=dup)
-    path = vault.note_filename(_notes_dir(cfg), fm["saved_at"], note["title"])
+    known = set(_known_tags(cfg, categories))
+    ai_tags = [t for t in note.get("tags", []) if vault.tag_name(t) in known]  # the model may only reuse tags
+    tags = [t for t in vault.merge_tags(d.get("tags"), ai_tags) if t != vault.tag_name(category or "")]
+    fm = _fm(rec, category=category, category_source=source, status=status, tags=tags, duplicate_of=dup)
+    path = vault.note_filename(_notes_dir(cfg), category, note["title"])
     vault.write_new_note(path, vault.render_note(
-        fm, title=note["title"], summary=note["summary"], key_facts=note["key_facts"],
-        dm=[(u, t) for u, t in d["dm"]], memos=d["memos"], caption=d["caption"], transcript=d["transcript"],
-        screen_text=d["screen_text"]))
+        fm, title=note["title"], summary=note["summary"],
+        content=note.get("content") or vault.facts_md(note["key_facts"]),
+        dm=[(u, t) for u, t in d["dm"]], memos=d["memos"], caption=d["caption"], transcript=d["transcript"]))
     rec = store.update(rec.code, state="written", note_path=str(path.relative_to(cfg.vault)),
                        data={"duplicate_of": dup})
     store.put_embedding(rec.code, vec)
@@ -298,9 +312,25 @@ def process_save(item: SaveItem, cfg: Config, store: Store, deps: Deps, categori
     return "written"
 
 
+def _retitle(path: Path, category: str | None, cfg: Config, store: Store) -> None:
+    """Keep the "(category) " filename prefix in step with the note's category."""
+    title = re.sub(r"^\([^)]*\) ", "", path.stem)
+    if path.stem == f"({vault.safe_name(category or vault.UNSORTED)}) {title}":
+        return
+    new = vault.note_filename(_notes_dir(cfg), category, title)
+    path.rename(new)
+    code = vault.read_note(new)[0].get("shortcode")
+    if isinstance(code, str) and store.get(code):
+        store.update(code, note_path=str(new.relative_to(cfg.vault)))
+        hub = next((h for c, _, h in store.embeddings() if c == code), None)
+        if hub:
+            _refresh_hub(cfg, store, hub)  # hub links follow the new filename
+
+
 def apply_rename(op: RenameOp, cfg: Config, store: Store) -> None:
     for path in vault.notes_with_category(_notes_dir(cfg), {op.old}):
         vault.update_frontmatter(path, category=op.new)
+        _retitle(path, op.new, cfg, store)
     for rec in store.all():
         if rec.data.get("category") == op.old:
             store.update(rec.code, data={"category": op.new})
@@ -332,6 +362,7 @@ def reclassify_removed(cfg: Config, store: Store, deps: Deps, current: list[str]
         out = deps.llm.run(classify_prompt(title=title, summary=summary, categories=current), CLASSIFY_SCHEMA)
         new = out["category"] if out["category"] in current else None
         vault.update_frontmatter(path, category=new, category_source="auto")
+        _retitle(path, new, cfg, store)
     for rec in store.all():
         if rec.data.get("category") in gone:
             store.update(rec.code, data={"category": AUTO})
@@ -363,14 +394,34 @@ def write_reports(cfg: Config, store: Store) -> None:
         unavailable=[stems[r.code] for r in items if r.data.get("unavailable") and r.code in stems],
         dm_errors=[(stems[r.code], err) for r in items if r.code in stems for _, err in r.data.get("dm_errors", [])])
     counts: dict[str, int] = {}
-    for path in sorted(_notes_dir(cfg).glob("*.md")):
-        try:
-            cat = vault.read_note(path)[0].get("category")
-        except vault.BadNote:
-            continue  # a note the user broke by hand must not stop the run
+    for fm in _note_fms(cfg):
+        cat = fm.get("category")
         if cat:
             counts[cat] = counts.get(cat, 0) + 1
     vault.write_counts(cfg.vault / ".reelnote" / "category-counts.json", counts)
+    vault.write_counts(cfg.vault / ".reelnote" / "tag-counts.json", _tag_counts(cfg))
+
+
+def _note_fms(cfg: Config):
+    for path in sorted(_notes_dir(cfg).glob("*.md")):
+        try:
+            yield vault.read_note(path)[0]
+        except vault.BadNote:
+            continue  # a note the user broke by hand must not stop the run
+
+
+def _tag_counts(cfg: Config) -> dict[str, int]:
+    """Tags as the notes have them now, including ones the user added in Obsidian."""
+    counts: dict[str, int] = {}
+    for fm in _note_fms(cfg):
+        tags = fm.get("tags")
+        for t in vault.merge_tags([tags] if isinstance(tags, str) else tags if isinstance(tags, list) else []):
+            counts[t] = counts.get(t, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _known_tags(cfg: Config, categories: list[str]) -> list[str]:
+    return vault.merge_tags(_tag_counts(cfg), categories)
 
 
 def _read_categories(cfg: Config) -> list[str] | None:

@@ -26,6 +26,8 @@ def test_rename_op(tmp_path):
     {"dm_url": "javascript:alert(1)"},
     {"category": ""},
     {"memo": 5},
+    {"tags": "AI"},
+    {"tags": [1]},
     {"op": "explode"},
 ])
 def test_invalid(tmp_path, patch):
@@ -50,3 +52,8 @@ def test_blank_memo_becomes_none(tmp_path):
 def test_created_at_must_be_iso(tmp_path, created_at):
     with pytest.raises(InvalidInboxItem):
         parse_item(write(tmp_path, {**GOOD, "created_at": created_at}))
+
+
+def test_save_tags_normalized(tmp_path):
+    item = parse_item(write(tmp_path, {**GOOD, "tags": ["Job Hunting", "#AI", "AI", " "]}))
+    assert item.tags == ("Job_Hunting", "AI")

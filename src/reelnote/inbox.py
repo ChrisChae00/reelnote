@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reelnote.shortcode import NotInstagramPost, shortcode
+from reelnote.vault import merge_tags
 
 AUTO = "auto"
 
@@ -21,6 +22,7 @@ class SaveItem:
     memo: str | None
     category: str
     created_at: str
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -74,5 +76,8 @@ def parse_item(path: Path) -> SaveItem | RenameOp:
         datetime.fromisoformat(created_at)  # it becomes part of the note filename
     except ValueError as e:
         raise InvalidInboxItem(f"created_at must be an ISO 8601 date: {created_at}") from e
+    tags = d.get("tags") or []
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        raise InvalidInboxItem("tags must be a list of strings")
     return SaveItem(id=path.stem, video_url=video_url, dm_url=dm_url, memo=_opt_str(d, "memo"),
-                    category=_req_str(d, "category"), created_at=created_at)
+                    category=_req_str(d, "category"), created_at=created_at, tags=tuple(merge_tags(tags)))

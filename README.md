@@ -8,7 +8,7 @@ Saving a Reel in Instagram is easy. Finding it again later is not, and after a f
 
 ## How it works
 
-1. **Phone (Scriptable share sheet):** Tap Share in Instagram and pick a category, or leave it on Auto to let the AI choose. Then confirm the video link and add the DM link and a memo if you have them.
+1. **Phone (Scriptable share sheet):** Tap Share in Instagram and pick a category, or leave it on Auto to let the AI choose. Then confirm the video link and add the DM link, a memo, and tags if you have them.
 2. **Queue (private GitHub repo):** Each save becomes one JSON file in the private data repo's `inbox/`. Items wait there while the Mac is off.
 3. **Mac (pipeline):** When the Mac is on, `launchd` checks GitHub every minute and, when something new arrived, pulls the inbox and processes each item:
    - Dedupes by Instagram shortcode, so the same post is never processed twice.

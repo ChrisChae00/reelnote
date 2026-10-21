@@ -6,18 +6,18 @@ FM = {"shortcode": "C1", "url": "https://www.instagram.com/p/C1/", "category": "
       "hub": None, "status": "done", "dm_links": [], "saved_at": "2026-10-17"}
 
 def make_note(tmp_path):
-    text = vault.render_note(FM, title="맥 앱", summary="요약", key_facts=["Raycast"], dm=[], memos=["참고"],
-                             caption="cap", transcript="tr", screen_text="Raycast")
+    text = vault.render_note(FM, title="맥 앱", summary="요약", content="- Raycast", dm=[], memos=["참고"],
+                             caption="cap", transcript="tr")
     p = tmp_path / "n.md"
     vault.write_new_note(p, text)
     return p
 
 def test_note_filename_sanitizes_and_dedupes(tmp_path):
-    p1 = vault.note_filename(tmp_path, "2026-10-17", 'Mac: 앱/툴 #1 [[best]] "7"')
-    assert p1.name == "2026-10-17 Mac 앱툴 1 best 7.md"
+    p1 = vault.note_filename(tmp_path, "개발", 'Mac: 앱/툴 #1 [[best]] "7"')
+    assert p1.name == "(개발) Mac 앱툴 1 best 7.md"
     p1.write_text("x")
-    assert vault.note_filename(tmp_path, "2026-10-17", 'Mac: 앱/툴 #1 [[best]] "7"').name == "2026-10-17 Mac 앱툴 1 best 7 (2).md"
-    assert vault.note_filename(tmp_path, "2026-10-17", "///").name == "2026-10-17 untitled.md"
+    assert vault.note_filename(tmp_path, "개발", 'Mac: 앱/툴 #1 [[best]] "7"').name == "(개발) Mac 앱툴 1 best 7 (2).md"
+    assert vault.note_filename(tmp_path, None, "///").name == "(미분류) untitled.md"
 
 def test_render_and_read_roundtrip(tmp_path):
     fm, body = vault.read_note(make_note(tmp_path))
@@ -127,9 +127,7 @@ def test_upsert_hub_with_only_start_marker_keeps_text(tmp_path):
 
 def test_note_filename_stays_in_notes_dir(tmp_path):
     notes = tmp_path / "notes"
-    assert vault.note_filename(notes, "2026-10-17", "../../x").parent == notes
-    with pytest.raises(ValueError):
-        vault.note_filename(notes, "../../../escape", "t")
+    assert vault.note_filename(notes, "../..", "../../x").parent == notes
 
 
 def test_hub_name_stays_in_hubs_dir(tmp_path):
@@ -142,8 +140,8 @@ EVIL = ["![x](https://evil/?d=1)", "<img src=https://evil>", "<iframe src=https:
 
 
 def test_untrusted_text_renders_inert(tmp_path):
-    text = vault.render_note(FM, title=EVIL[1], summary=EVIL[0], key_facts=EVIL, dm=[("https://n.site", EVIL[2])],
-                             memos=[], caption=EVIL[0], transcript=EVIL[1], screen_text=EVIL[2])
+    text = vault.render_note(FM, title=EVIL[1], summary=EVIL[0], content="\n".join(EVIL), dm=[("https://n.site", EVIL[2])],
+                             memos=[], caption=EVIL[0], transcript=EVIL[1])
     body = vault._split(text)[1]
     assert "![" not in body and "<img" not in body and "<iframe" not in body
     assert "!\\[x](https://evil/?d=1)" in body and "&lt;img src=https://evil>" in body
@@ -158,3 +156,16 @@ def test_untrusted_text_renders_inert(tmp_path):
 
 def test_plain_links_survive_inert():
     assert vault._inert("see [docs](https://x.com) and https://y.com") == "see [docs](https://x.com) and https://y.com"
+
+
+def test_render_drops_screen_text_and_mermaid_click():
+    text = vault.render_note(FM, title="t", summary="s", dm=[], memos=[], caption="c", transcript="tr",
+                             content="### 무료\n- **A**\n```mermaid\nflowchart LR\n  a --> b\n  click a \"https://evil\"\n```")
+    assert "### 무료" in text and "a --> b" in text and "click" not in text and "On-screen" not in text
+
+
+def test_tag_name():
+    assert vault.tag_name("Job Hunting") == "Job_Hunting"
+    assert vault.tag_name(" #AI ") == "AI" and vault.tag_name("면접/코딩") == "면접/코딩"
+    assert vault.tag_name("2026") is None and vault.tag_name("!!") is None and vault.tag_name(3) is None
+    assert vault.merge_tags(["AI", "ai", "AI"], ["#AI", "이력서"]) == ["AI", "ai", "이력서"]

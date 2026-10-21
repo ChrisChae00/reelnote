@@ -4,7 +4,8 @@ import pytest
 from reelnote.llm import Chain, note_prompt, extract_json, BadOutput, AllProvidersLimited, NOTE_SCHEMA, CLASSIFY_SCHEMA
 from reelnote.store import Store
 
-NOTE = {"title": "맥북 생산성 앱 7개", "summary": "s", "key_facts": ["Raycast: 런처"], "keywords": ["mac"], "category": None}
+NOTE = {"title": "맥북 생산성 앱 7개", "summary": "s", "content": "- **Raycast**: 런처", "key_facts": ["Raycast: 런처"],
+        "keywords": ["mac"], "category": None, "tags": []}
 
 def cp(code=0, out="", err=""):
     return subprocess.CompletedProcess([], code, out, err)

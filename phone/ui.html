@@ -44,6 +44,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .large-title { margin: 4px 20px 2px; font-size: 2.125rem; line-height: 1.12; letter-spacing: -0.024em; font-weight: 700; }
 .lede { margin: 0 20px 18px; color: var(--ink-2); font-size: 0.9375rem; letter-spacing: -0.005em; }
 .group-label { margin: 22px 32px 6px; font-size: 0.8125rem; color: var(--ink-2); letter-spacing: 0.005em; }
+.group-label em { font-style: normal; opacity: 0.75; }
 .group { list-style: none; margin: 0 16px; padding: 0; background: var(--cell); border-radius: 12px; overflow: hidden; }
 .empty { margin: 0 32px; font-size: 0.9375rem; color: var(--ink-2); }
 
@@ -74,6 +75,19 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .field input, .field textarea { border: 0; background: none; padding: 2px 0; font-size: 1rem; letter-spacing: -0.008em; width: 100%; min-width: 0; resize: none; }
 .field input:focus, .field textarea:focus { outline: none; }
 .field:focus-within { box-shadow: inset 3px 0 0 var(--tint); }
+.tag-box { padding: 10px 16px 12px; display: grid; gap: 10px; }
+.tag-add { display: flex; gap: 8px; align-items: center; }
+.tag-add input { flex: 1; min-width: 0; border: 0; background: none; padding: 4px 0; font-size: 1rem; }
+.tag-add input:focus { outline: none; }
+.tag-add button { flex: none; border: 0; background: var(--tint-soft); color: var(--tint); font-weight: 600; font-size: 0.875rem; padding: 5px 12px; border-radius: 999px; }
+.tag-add button:disabled { opacity: 0.4; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tags:empty { display: none; }
+.tag { border: 1px solid var(--sep); background: none; color: var(--ink); font-size: 0.875rem; padding: 4px 11px; border-radius: 999px; transition: transform 100ms ease-out, background-color 150ms ease; }
+.tag:active { transform: scale(0.94); transition: none; }
+.tag small { color: var(--ink-2); font-size: 0.75rem; margin-left: 3px; }
+.tag[aria-pressed="true"] { background: var(--tint); border-color: var(--tint); color: #fff; }
+.tag[aria-pressed="true"] small { color: rgba(255,255,255,0.8); }
 .err { margin: 6px 32px 0; font-size: 0.8125rem; color: var(--danger); min-height: 1.2em; }
 .bottom-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + var(--bottom)); background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
 .primary { width: 100%; border: 0; border-radius: 14px; padding: 14px; background: var(--tint); color: #fff; font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.012em; display: inline-flex; justify-content: center; align-items: center; gap: 6px; transition: transform 100ms ease-out, opacity 100ms ease-out, background-color 200ms ease; }
@@ -152,6 +166,11 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
           <div class="field"><label for="videoUrl">영상 링크</label><input id="videoUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://www.instagram.com/reel/…"></div>
           <div class="field"><label for="dmUrl">DM으로 받은 링크 <em>선택</em></label><input id="dmUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://"></div>
           <div class="field"><label for="memo">메모 <em>선택</em></label><textarea id="memo" rows="3" placeholder="왜 저장했는지 적어두면 나중에 찾기 쉬워요"></textarea></div>
+        </div>
+        <p class="group-label">태그 <em>선택 · 다른 노트와 연결돼요</em></p>
+        <div class="group tag-box">
+          <div class="tag-add"><input id="tagIn" type="text" autocomplete="off" maxlength="40" enterkeyhint="done" placeholder="새 태그" aria-label="새 태그"><button id="tagAdd" type="button" disabled>추가</button></div>
+          <div class="tags" id="tagList" role="group" aria-label="태그"></div>
         </div>
         <p class="err" id="saveErr" aria-live="polite"></p>
       </form>
@@ -338,7 +357,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
   // ---------- pick → save screen ----------
   let chosen = 'auto';
   const label = (name) => (name === 'auto' ? '자동 분류' : name);
-  const pick = (name) => { chosen = name; $('chosen').textContent = label(name); resetSave(); openSave(); };
+  const pick = (name) => { chosen = name; $('chosen').textContent = label(name); renderTags(); resetSave(); openSave(); };
   $('home').addEventListener('click', (e) => {
     const ed = e.target.closest('[data-edit]'); if (ed) { openEdit(ed.dataset.edit); return; }
     const p = e.target.closest('[data-pick]'); if (p) pick(p.dataset.pick);
@@ -412,6 +431,34 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
     setTimeout(() => { reflow(() => { cats = cats.filter((c) => c.name !== name); }); flash(`'${name}' 삭제됨`); }, RM.matches ? 0 : 160);
   });
 
+  // ---------- tags: used tags first, then category names; the main category is not offered ----------
+  const tagName = (t) => { const n = t.trim().replace(/^#+/, '').replace(/\s+/g, '_').replace(/[^\p{L}\p{M}\p{N}_\/-]/gu, '').slice(0, 40); return n && !/^\d+$/.test(n) ? n : ''; };
+  const usedTags = INIT ? INIT.tags : [{ name: '이력서', count: 4 }, { name: 'AI', count: 3 }, { name: '자격증', count: 2 }];
+  const extraTags = []; let picked = [];
+  const tagList = $('tagList'), tagIn = $('tagIn'), tagAdd = $('tagAdd');
+  const renderTags = () => {
+    const main = tagName(chosen), seen = new Set(), all = [];
+    const add = (name, count) => { if (name && name !== main && !seen.has(name)) { seen.add(name); all.push({ name, count }); } };
+    usedTags.forEach((t) => add(t.name, t.count)); cats.forEach((c) => add(tagName(c.name), 0)); extraTags.forEach((n) => add(n, 0));
+    picked = picked.filter((n) => n !== main);
+    tagList.innerHTML = all.map((t) => `<button class="tag" type="button" data-tag="${esc(t.name)}" aria-pressed="${picked.includes(t.name)}">#${esc(t.name)}${t.count ? `<small>${t.count}</small>` : ''}</button>`).join('');
+  };
+  tagList.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tag]'); if (!b) return;
+    const n = b.dataset.tag, on = !picked.includes(n);
+    picked = on ? [...picked, n] : picked.filter((x) => x !== n);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const addTag = () => {
+    const n = tagName(tagIn.value); if (!n) return;
+    if (!extraTags.includes(n)) extraTags.push(n);
+    if (!picked.includes(n) && n !== tagName(chosen)) picked.push(n);
+    tagIn.value = ''; tagAdd.disabled = true; renderTags();
+  };
+  tagIn.addEventListener('input', () => { tagAdd.disabled = !tagName(tagIn.value); });
+  tagIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } });
+  tagAdd.addEventListener('click', addTag);
+
   // ---------- save ----------
   const videoIn = $('videoUrl'), dmIn = $('dmUrl'), memoIn = $('memo'), saveErr = $('saveErr'), saveBtn = $('saveBtn');
   const reelRe = /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p)\/[A-Za-z0-9_-]+/;
@@ -433,7 +480,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
     e.preventDefault(); if (saving || !validateSave() || saveBtn.classList.contains('done')) return;
     saving = true; setBusy(saveBtn, '저장 중…');
     const res = await send({ op: 'save', category: chosen, video_url: videoIn.value.trim(),
-      dm_url: dmIn.value.trim() || null, memo: memoIn.value.trim() || null });
+      dm_url: dmIn.value.trim() || null, memo: memoIn.value.trim() || null, tags: picked });
     saving = false; clearBusy(saveBtn);
     if (!res.ok) { saveBtn.textContent = '다시 저장'; saveBtn.disabled = false; saveErr.textContent = res.error; return; }
     saveBtn.classList.add('done'); saveBtn.innerHTML = `${checkSvg}저장됨`;
@@ -443,7 +490,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
       closeSave();
       if (chosen !== 'auto') setTimeout(() => toTop(chosen), RM.matches ? 0 : 260);
       flash(`${label(chosen)}에 저장했어요`);
-      dmIn.value = ''; memoIn.value = '';
+      dmIn.value = ''; memoIn.value = ''; picked = [];
     }, RM.matches ? 300 : 650);
   });
 

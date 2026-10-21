@@ -6,6 +6,7 @@ const REPO = "ChrisChae00/reelnote-data"
 const KEY = "reelnote.github"
 const CATS = "vault/categories.md"
 const COUNTS = "vault/.reelnote/category-counts.json"
+const TAG_COUNTS = "vault/.reelnote/tag-counts.json"
 const CATS_HEADER = "# Categories, most recently created or used first. One per line.\n"
 const UI_HTML = "__UI_HTML__" // build.mjs replaces this with phone/ui.html
 
@@ -44,6 +45,21 @@ function checkName(name) {
   if (name.length > 30 || /[\r\n]/.test(name)) throw new Error("카테고리 이름은 한 줄, 30자 이내여야 해요.")
   if (name.startsWith("#") || name.toLowerCase() === "auto") throw new Error(`'${name}'은(는) 카테고리 이름으로 쓸 수 없어요.`)
   return name
+}
+
+// same rule as the Mac's vault.tag_name: Obsidian tags have no spaces and are not all digits
+function tagName(t) {
+  if (typeof t !== "string") return null
+  const n = t.trim().replace(/^#+/, "").replace(/\s+/g, "_").replace(/[^\p{L}\p{M}\p{N}_\/-]/gu, "").slice(0, 40)
+  return n && !/^\d+$/.test(n) ? n : null
+}
+function cleanTags(tags) {
+  if (tags == null) return []
+  if (!Array.isArray(tags)) throw new Error("태그 형식이 잘못됐어요.")
+  const out = []
+  for (const t of tags) { const n = tagName(t); if (n && !out.includes(n)) out.push(n) }
+  if (out.length > 10) throw new Error("태그는 10개까지 붙일 수 있어요.")
+  return out
 }
 
 // ---------- inbox files: inbox/<YYYYMMDD-HHMMSS>-<4 hex>.json ----------
@@ -95,8 +111,8 @@ async function readCats() {
   if (status !== 200) throw new Error(`categories.md를 읽지 못했어요(${status}).`)
   return { text: decode(json.content), sha: json.sha }
 }
-async function readCounts() {
-  const { status, json } = await gh("GET", COUNTS)
+async function readCounts(path) {
+  const { status, json } = await gh("GET", path)
   if (status !== 200) return {}
   try { return JSON.parse(decode(json.content)) } catch (e) { return {} }
 }
@@ -129,9 +145,10 @@ async function handle(msg) {
     const category = msg.category === "auto" ? "auto" : checkName(msg.category)
     if (typeof msg.video_url !== "string" || !/^https?:\/\/(www\.)?instagram\.com\//.test(msg.video_url)) throw new Error("영상 링크가 인스타그램 주소가 아니에요.")
     const opt = (v) => (typeof v === "string" && v.trim() ? v.trim() : null)
+    const tags = cleanTags(msg.tags)
     // categories.md first: the Mac turns a category it cannot find into auto
     if (category !== "auto") await editCats((t) => moveToTop(t, category), `categories: use ${category}`)
-    await putInbox({ op: "save", video_url: msg.video_url.trim(), dm_url: opt(msg.dm_url), memo: opt(msg.memo), category }, "inbox: save")
+    await putInbox({ op: "save", video_url: msg.video_url.trim(), dm_url: opt(msg.dm_url), memo: opt(msg.memo), category, tags }, "inbox: save")
   } else if (msg.op === "create") {
     const name = checkName(msg.name)
     await editCats((t) => moveToTop(t, name), `categories: create ${name}`)
@@ -170,15 +187,16 @@ async function fail(message) {
 
 async function main() {
   if (!Keychain.contains(KEY) && !(await askToken())) return
-  let counts
+  let counts, tagCounts
   try {
-    [catsCache, counts] = await Promise.all([readCats(), readCounts()])
+    [catsCache, counts, tagCounts] = await Promise.all([readCats(), readCounts(COUNTS), readCounts(TAG_COUNTS)])
   } catch (e) {
     return fail(e.message)
   }
   const shared = [...(args.urls || []), ...(args.plainTexts || [])].map(firstUrl).find(Boolean) || ""
   const init = {
     cats: names(catsCache.text).map((name) => ({ name, count: counts[name] || 0 })),
+    tags: Object.entries(tagCounts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count),
     shared, inShareSheet: config.runsInActionExtension,
   }
   // "<" escaped so a category name cannot close the script tag; a function replacement so "$&" stays literal
@@ -204,7 +222,7 @@ async function main() {
 }
 
 if (typeof Script === "undefined") {
-  module.exports = { names, moveToTop, removeName, renameName, checkName, isoLocal, inboxPath, firstUrl, handle, editCats, setCache: (c) => { catsCache = c } }
+  module.exports = { names, moveToTop, removeName, renameName, checkName, tagName, cleanTags, isoLocal, inboxPath, firstUrl, handle, editCats, setCache: (c) => { catsCache = c } }
 } else {
   await main()
   Script.complete()
